@@ -7,7 +7,7 @@ ROBOT_RADIUS = 0.25
 SENSING_RADIUS = 3.0
 EPSILON = 0.1
 D_FRAC = 0.0
-GRID_SIZE = 0.05
+GRID_SIZE = 0.1
 EXPAND_SIZE = 3
 
 VMAX = 1.0
@@ -16,6 +16,12 @@ UMAX = 5.0
 HORIZON_LENGTH = 10
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
+
+#Parameters of target
+TAR_MAX_SPEED = 1
+TAR_STARTS = np.array([5.0, 10.0, 5.0])  
+TAR_GOALS = np.array([21.0, 5.0, 5.0])  
+TAR_EPSILON = 0.1
 
 W_tra = 1.0
 W_u = 4e-1

@@ -157,7 +157,7 @@ if __name__ == "__main__":
                         angle_min=-math.pi, angle_max=math.pi, resolution=math.pi/45)
     import time
     st = time.time()
-    data = lidar.sense_obstacle(np.concatenate([pose, [0]]), robots)
+    data = lidar.senseObstacle(np.concatenate([pose, [0]]), robots)
     ang, dist = data
     print(time.time()-st)
 
