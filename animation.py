@@ -1,0 +1,123 @@
+from mpl_toolkits import mplot3d
+import matplotlib.pyplot as plt
+import numpy as np
+import math
+import pickle
+
+from config import *
+
+export = False
+if export:
+    import cv2
+    image_array = []
+
+# For drone representation
+p1 = np.array([3*ROBOT_RADIUS / 4, 0, 0, 1]).T
+p2 = np.array([-3*ROBOT_RADIUS / 4, 0, 0, 1]).T
+p3 = np.array([0, 3*ROBOT_RADIUS / 4, 0, 1]).T
+p4 = np.array([0,-3*ROBOT_RADIUS / 4, 0, 1]).T
+
+def transformation_matrix(data):
+    x = data[0]; y = data[1]; z = data[2]; psi = data[3]+np.pi/4
+    return np.array([[np.cos(psi), -np.sin(psi), 0, x],
+                     [np.sin(psi), np.cos(psi), 0, y],
+                     [0, 0, 1, z]])
+
+def getCircle(x,y,r):
+    theta = np.linspace( 0 , 2 * np.pi , 150 )   
+    a = x + r * np.cos( theta )
+    b = y + r * np.sin( theta )
+    return a, b
+
+def data_for_cylinder_along_z(center_x,center_y,radius,height_z):
+    z = np.linspace(height_z-5.0, height_z, 50)
+    theta = np.linspace(0, 2*np.pi, 50)
+    theta_grid, z_grid=np.meshgrid(theta, z)
+    x_grid = radius*np.cos(theta_grid) + center_x
+    y_grid = radius*np.sin(theta_grid) + center_y
+    return x_grid,y_grid,z_grid
+
+def observerObstacles(pose):
+    observed_obstacles = []
+    for i in range(OBSTACLES.shape[0]):
+        if np.hypot(pose[0]-OBSTACLES[i,0],
+                    pose[1]-OBSTACLES[i,1]) < SENSING_RADIUS + OBSTACLES[i,2]:
+            observed_obstacles.append(OBSTACLES[i,:])
+    return np.array(observed_obstacles)
+
+# path = np.load("path.npy")
+# print(path)
+with open(FILE_NAME, 'rb') as file:
+    data = pickle.load(file)
+
+# path = data["path"]
+# predictions = data["predictions"]
+# print(predictions.shape)
+
+if SCENARIO == 1:
+    size = (8,3.5)
+elif SCENARIO == 2:
+    size = (5,5)
+plt.figure(figsize=size)
+length = data[0]["path"].shape[0]
+
+ax = plt.axes()
+for iter in range(length):
+    ax.cla()
+
+    # Plot start and goal
+    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="Starts")
+    ax.scatter(GOALS[:,0], GOALS[:,1], marker="^", s=50, label="Targets")
+
+    # Plot obstacles
+    kwargs = {'color': 'k', 'linewidth': 1.5, 'linestyle': '-'}
+    for j in range(OBSTACLES.shape[0]):
+        x, y, r = OBSTACLES[j,:]
+        a, b = getCircle(x, y, r)
+        ax.plot(a, b, **kwargs)
+    ax.plot([], [], label="Obstacles", **kwargs)
+
+    # Plot path
+    for i in range(NUM_ROBOT):
+        path = data[i]["path"]
+        traj_refs = data[i]["traj_refs"]
+        # Plot path
+        plt.plot(path[:iter,1], path[:iter,2], label="Drone {}".format(i))
+        
+        # Plot robot
+        a, b = getCircle(path[iter,1], path[iter,2], ROBOT_RADIUS)
+        plt.plot(a, b, '-b')
+        # plt.arrow(path[iter,0],  path[iter,1],
+        #             path[iter,3]*percent,  path[iter,4]*percent,
+        #             width=width, color='r')
+
+        # Plot trajectory reference
+        if METHOD == 1:
+            plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
+
+    # ax.legend()
+    ax.grid(True)
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.axis("scaled")
+    ax.legend()
+    ax.set_xlim(XLIM)
+    ax.set_ylim(YLIM)
+    plt.tight_layout()
+
+    plt.gcf().canvas.mpl_connect('key_release_event',
+                                    lambda event:
+                                    [exit(0) if event.key == 'escape' else None])
+    if export:
+        file_name = "results/data.png"
+        plt.savefig(file_name)
+        img = cv2.imread(file_name)
+        image_array.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+    plt.pause(0.001)
+
+if export:
+    import imageio
+    imageio.mimsave(SAVE_GIF, image_array)
+
+plt.show()
