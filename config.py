@@ -7,7 +7,7 @@ ROBOT_RADIUS = 0.25
 SENSING_RADIUS = 3.0
 EPSILON = 0.1
 D_FRAC = 0.0
-GRID_SIZE = 0.1
+GRID_SIZE = 0.05
 EXPAND_SIZE = 3
 
 VMAX = 1.0
@@ -21,7 +21,7 @@ W_tra = 1.0
 W_u = 4e-1
 W_col = 1.5
 
-SCENARIO = 2
+SCENARIO = 1
 if SCENARIO == 1:
     STARTS = np.array([[2., 3., 5.],
                        [2., 5., 5.],
