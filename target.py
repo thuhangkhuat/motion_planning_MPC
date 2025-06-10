@@ -80,57 +80,6 @@ class Target:
         self.state += self.velocity * TIMESTEP
 
 if __name__ == "__main__":
-    # def get_circle(x, y, r):
-    #     theta = np.linspace(0, 2 * np.pi, 100)
-    #     a = x + r * np.cos(theta)
-    #     b = y + r * np.sin(theta)
-    #     return a, b
-    # initial_state = [TAR_STARTS[0], TAR_STARTS[1], TAR_STARTS[2]]
-    # final_destination = [TAR_GOALS[0], TAR_GOALS[1], TAR_GOALS[2]]
-    
-    # target = Target(initial_state, final_destination)
-    # target.generateTrajectory()
-    
-    # # Plotting the scenario
-    # plt.figure(figsize=(20, 10))
-    
-    # for obs in OBSTACLES:
-    #     x, y, r = obs
-    #     a, b = get_circle(x, y, r)
-    #     plt.fill(a, b, "k", alpha=0.5, label='_nolegend_')
-        
-    # planned_path_np = np.array(target.planned_path)
-    # plt.plot(planned_path_np[:, 0], planned_path_np[:, 1], 'g--', label='Planned Path (A*)')
-
-    # plt.plot(initial_state[0], initial_state[1], 'bo', markersize=10, label='Start')
-    # plt.plot(final_destination[0], final_destination[1], 'r*', markersize=15, label='Final Destination')
-
-    # target_path_history = [target.state.copy()]
-
-    # max_steps = 2000 
-    # for step in range(max_steps):
-    #     target.update()
-    #     target_path_history.append(target.state.copy())
-        
-    #     if np.linalg.norm(target.state - target.final_destination) < 0.1:
-    #         print(f"Target reached destination in {step+1} steps.")
-    #         break
-    # if step == max_steps - 1:
-    #     print("Simulation ended: Reached max steps.")
-
-    # # path_history_np = np.array(target_path_history)
-    # # plt.plot(path_history_np[:, 0], path_history_np[:, 1], 'b-', linewidth=2, label='Actual Target Trajectory')
-    
-
-    # plt.title("Target Path Simulation with Obstacles")
-    # plt.xlabel("X Position")
-    # plt.ylabel("Y Position")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.axis('equal')
-    # plt.xlim(XLIM)
-    # plt.ylim(YLIM)
-    # plt.show()
     def get_circle(x, y, r):
         theta = np.linspace(0, 2 * np.pi, 100)
         a = x + r * np.cos(theta)

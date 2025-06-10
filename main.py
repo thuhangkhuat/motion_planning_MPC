@@ -2,19 +2,23 @@
 from config import *
 if METHOD == 1:
     from robot import Robot
-elif METHOD == 2:
-    from robot_mpc import Robot
-elif METHOD == 3:
-    from robot_apf import Robot
 
 import numpy as np
 import time
 import matplotlib.pyplot as plt
 import pickle
+import target as Target
+
 
 if __name__ == "__main__":
 
+    # Initialize target
+    target = Target.Target(TAR_STARTS, TAR_GOALS)
+    target.generateTrajectory()
+    target_traj = []
+    
     robots = []
+
     # Initialize Robot
     for i in range(NUM_ROBOT):
         robot = Robot(0, np.concatenate([STARTS[i,:],[0,0,0]]), GOALS[i,:])
@@ -25,9 +29,13 @@ if __name__ == "__main__":
     try:
         print("[INFO] Start")
         while True:
+            # Update target
+            target.update()
+            target_traj.append(target.state.copy())
             # compute velocity using nmpc
             start = time.time()
             for i in range(NUM_ROBOT):
+                robots[i].goal = target.state.copy()
                 robots[i].computeControlSignal(robots)
                 compute_times.append(time.time()-start)
             iter += 1
@@ -35,11 +43,15 @@ if __name__ == "__main__":
                 print("Iteration {}".format(iter))
 
             # Reach terminal condition
-            count = 0
-            for i in range(NUM_ROBOT):
-                if np.linalg.norm(robots[i].state[:3] - robots[i].goal) < EPSILON:
-                    count += 1
-            if count == NUM_ROBOT:
+            # count = 0
+            # for i in range(NUM_ROBOT):
+            #     if np.linalg.norm(robots[i].state[:3] - robots[i].goal) < EPSILON:
+            #         count += 1
+            # if count == NUM_ROBOT:
+            #     break
+            distance_to_final_dest = np.linalg.norm(target.state - target.final_destination)
+            if distance_to_final_dest < 0.3: 
+                print(f"[INFO] Target has reached its final destination. Stopping simulation.")
                 break
     finally:
         print("[INFO] Saving")
@@ -49,6 +61,7 @@ if __name__ == "__main__":
             r = {}
             r["path"] = np.array(robots[i].path)
             r["traj_refs"] = np.array(robots[i].traj_refs)
+            r["tar_traj"] = np.array(target_traj)
             data[i] = r
         with open(FILE_NAME, 'wb') as file:
             pickle.dump(data, file, protocol=pickle.HIGHEST_PROTOCOL)

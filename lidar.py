@@ -38,12 +38,12 @@ class LidarScanner:
                 obstacles.append(OBSTACLES[i,:])
         
         # Sense robots
-        for i in range(len(robots)):
-            distance = np.hypot(pose[0]-robots[i].state[0], pose[1]-robots[i].state[1])
-            if distance < SENSING_RADIUS + ROBOT_RADIUS and distance > ROBOT_RADIUS:
-                obstacles.append(np.array([robots[i].state[0],
-                                           robots[i].state[1],
-                                           ROBOT_RADIUS]))
+        # for i in range(len(robots)):
+        #     distance = np.hypot(pose[0]-robots[i].state[0], pose[1]-robots[i].state[1])
+        #     if distance < SENSING_RADIUS + ROBOT_RADIUS and distance > ROBOT_RADIUS:
+        #         obstacles.append(np.array([robots[i].state[0],
+        #                                    robots[i].state[1],
+        #                                    ROBOT_RADIUS]))
 
         data = []
         x, y, _ = pose

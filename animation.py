@@ -49,7 +49,7 @@ def observerObstacles(pose):
 # print(path)
 with open(FILE_NAME, 'rb') as file:
     data = pickle.load(file)
-
+target_trajectory = data[0]["tar_traj"] 
 # path = data["path"]
 # predictions = data["predictions"]
 # print(predictions.shape)
@@ -59,15 +59,15 @@ if SCENARIO == 1:
 elif SCENARIO == 2:
     size = (5,5)
 plt.figure(figsize=size)
-length = data[0]["path"].shape[0]
+length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
 ax = plt.axes()
 for iter in range(length):
     ax.cla()
 
     # Plot start and goal
-    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="Starts")
-    ax.scatter(GOALS[:,0], GOALS[:,1], marker="^", s=50, label="Targets")
+    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="Robot Starts")
+    # ax.scatter(TAR_GOALS[0], TAR_GOALS[1], marker="^", s=50, label="Target")
 
     # Plot obstacles
     kwargs = {'color': 'k', 'linewidth': 1.5, 'linestyle': '-'}
@@ -76,6 +76,10 @@ for iter in range(length):
         a, b = getCircle(x, y, r)
         ax.plot(a, b, **kwargs)
     ax.plot([], [], label="Obstacles", **kwargs)
+
+    # Plot target trajectory
+    ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
+    ax.plot(target_trajectory[iter, 0], target_trajectory[iter, 1], 'rX', markersize=10, label="Target")
 
     # Plot path
     for i in range(NUM_ROBOT):
