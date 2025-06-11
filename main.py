@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     # Initialize Robot
     for i in range(NUM_ROBOT):
-        robot = Robot(0, np.concatenate([STARTS[i,:],[0,0,0]]), GOALS[i,:])
+        robot = Robot(i, np.concatenate([STARTS[i,:],[0,0,0]]), GOALS[i,:])
         robots.append(robot)
     
     compute_times = []

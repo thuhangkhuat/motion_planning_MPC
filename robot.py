@@ -102,6 +102,16 @@ class Robot:
                                             (opt_states[i,1]-obs_y)**2) - ROBOT_RADIUS
                 opti.subject_to(temp_constraints_ > 0.0)
 
+        # add constrain to neighbors robot
+        for i in range(HORIZON_LENGTH):
+            for other_robot in neighbor_robots:
+                if self.index >= other_robot.index: 
+                    continue
+                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
+                # MPC constraint
+                dist_sq = ca.sumsqr(opt_states[i, :3] - other_pos)
+                opti.subject_to(dist_sq >= ROBOT_RADIUS**2)
+
         # add constraints CBF and formation
         for i in range(HORIZON_LENGTH):
             current_state = opt_states[i, :]
@@ -115,9 +125,9 @@ class Robot:
             Lf2_h_target = -2 * ca.sumsqr(current_vel)
             LgLf_h_target = -2 * (current_pos - target_pos)
             # h_ddot + 2*gamma*h_dot + gamma^2*h >= 0
-            opti.subject_to(Lf2_h_target + ca.mtimes(LgLf_h_target, current_control.T) + \
-                            2 * CBF_GAMMA * h_dot_target + CBF_GAMMA**2 * h_target >= slack_cbf[i])
-            opti.subject_to(slack_cbf[i] >= 0)
+            # opti.subject_to(Lf2_h_target + ca.mtimes(LgLf_h_target, current_control.T) + \
+            #                 2 * CBF_GAMMA * h_dot_target + CBF_GAMMA**2 * h_target >= slack_cbf[i])
+            # opti.subject_to(slack_cbf[i] >= 0)
 
 
         # velocity and control constraints
@@ -129,7 +139,12 @@ class Robot:
             con = opt_controls[i,:]
             con_sq = UMAX**2 - ca.mtimes([con, con.T])
             opti.subject_to(con_sq >= 0)
-
+        for i in range(HORIZON_LENGTH):
+            vel = opt_states[i+1, 3:]
+            opti.subject_to(ca.sumsqr(vel) <= VMAX**2)
+            con = opt_controls[i, :]
+            opti.subject_to(ca.sumsqr(con) <= UMAX**2)
+        
         opts_setting = {'ipopt.max_iter': 200,   #1e5
                         'ipopt.print_level': 0,
                         'ipopt.tol': 1e-4,  #1e-6
@@ -228,18 +243,15 @@ class Robot:
             for other_robot in neighbors:
                 if self.index >= other_robot.index: 
                     continue
-                other_pos = other_robot.states_prediction[i, :3]
+                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
                 dist_sq = ca.sumsqr(current_pos - other_pos)
                 cost_dist += ca.exp(-5 * (dist_sq - MIN_SEPARATION**2))
-                cost_dist += ca.exp(5 * (dist_sq - MAX_SEPARATION**2))
         for i in range(HORIZON_LENGTH):
             pos_i = traj[i, :3]
             for j in range(len(neighbors)):
-                for k in range(j + 1, len(neighbors)):
-                    robot_j = neighbors[j]
-                    robot_k = neighbors[k]
-                    pos_j = robot_j.states_prediction[i, :3]
-                    pos_k = robot_k.states_prediction[i, :3]
+                for k in range(j + 1, len(neighbors)): 
+                    pos_j = ca.reshape(ca.DM(neighbors[j].states_prediction[i, :3]), 1, 3)
+                    pos_k = ca.reshape(ca.DM(neighbors[k].states_prediction[i, :3]), 1, 3)
                     vec_ij = pos_j - pos_i
                     vec_ik = pos_k - pos_i
                     area_sq = 0.25 * (vec_ij[0]*vec_ik[1] - vec_ij[1]*vec_ik[0])**2
@@ -274,6 +286,7 @@ class Robot:
                 continue
             other_current_pos = other_robot.state[:3]
             distance = np.linalg.norm(current_pos - other_current_pos)
+            # print(f"Distance to robot {other_robot.index}: {distance}")
             if distance < SENSING_NEIGHBOR:
                 neighbors.append(other_robot)
         return neighbors

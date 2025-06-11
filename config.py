@@ -20,29 +20,29 @@ METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
 #Parameters of target
 TAR_MAX_SPEED = 0.8
-TAR_STARTS = np.array([5.0, 10.0, 5.0])  
+TAR_STARTS = np.array([3.0, 5.0, 5.0])  
 TAR_GOALS = np.array([21.0, 5.0, 5.0])  
 TAR_EPSILON = 0.1
 
-VIEWING_RADIUS = 5.0    # R_view: radius of the viewing area
-MIN_SEPARATION = 1.5    # d_min: minimum distance between robots
-MAX_SEPARATION = 3.0    # d_max: maximum distance between robots
+VIEWING_RADIUS = 10.0    # R_view: radius of the viewing area
+MIN_SEPARATION = 1.0    # d_min: minimum distance between robots
+MAX_SEPARATION = 8.0    # d_max: maximum distance between robots
 # Weights for MPC
 W_tra = 1.0
 W_u = 4e-1
 W_col = 1.5
 W_slack = 1.0
-W_form_dist = 1.0
-W_form_struct = 1.0
+W_form_dist = 0.1
+W_form_struct = 0.1
 
 # Weights for CBF
 CBF_GAMMA = 1.0 
 
 SCENARIO = 1
 if SCENARIO == 1:
-    STARTS = np.array([[2., 3., 5.],
+    STARTS = np.array([[1.5, 4.5, 5.],
                        [2., 5., 5.],
-                       [2., 7., 5.],])
+                       [2.5, 5.5, 5.],])
     # STARTS = np.array([[2., 3., 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
