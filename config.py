@@ -24,19 +24,19 @@ TAR_STARTS = np.array([3.0, 5.0, 5.0])
 TAR_GOALS = np.array([21.0, 5.0, 5.0])  
 TAR_EPSILON = 0.1
 
-VIEWING_RADIUS = 10.0    # R_view: radius of the viewing area
+VIEWING_RADIUS = 3.0    # R_view: radius of the viewing area
 MIN_SEPARATION = 1.0    # d_min: minimum distance between robots
 MAX_SEPARATION = 8.0    # d_max: maximum distance between robots
 # Weights for MPC
 W_tra = 1.0
 W_u = 4e-1
 W_col = 1.5
-W_slack = 1.0
+W_slack = 6.0
 W_form_dist = 0.1
 W_form_struct = 0.1
 
 # Weights for CBF
-CBF_GAMMA = 1.0 
+DT_CBF_GAMMA = 0.5 
 
 SCENARIO = 1
 if SCENARIO == 1:

@@ -7,9 +7,11 @@ import math
 import numpy as np
 
 class Target:
-    def __init__(self, initial_state, final_destination):
-        self.state = np.array(initial_state, dtype=float) # Initial state [x, y, z]
-        self.final_destination = np.array(final_destination, dtype=float)
+    def __init__(self, waypoints):
+        self.state = np.array(waypoints[0].copy(), dtype=float) # Initial state [x, y, z]
+        self.waypoints = [np.array(wp, dtype=float) for wp in waypoints]
+        self.state = self.waypoints[0].copy() # Initial state is the first waypoint
+        self.final_destination = self.waypoints[-1].copy() # Final destination is the last waypoint
 
         self.planned_path = [] #Stores the planned path
         self.path_index = 0 
@@ -41,18 +43,22 @@ class Target:
                     if dist_to_obs <= obs[2] + GRID_SIZE:
                         global_grid_map[i, j] = 1
 
-        start_grid = gridCoords(self.state)
-        goal_grid = gridCoords(self.final_destination)
-
         # Initialize the A* planner with the global grid map
-        self.planner.updatePlanner(global_grid_map, start_grid, goal_grid)
-        rx, ry = self.planner.planning()
-        rx.reverse()
-        ry.reverse()
-        for i in range(len(rx)):
-            world_x = XLIM[0] + rx[i] * GRID_SIZE
-            world_y = YLIM[0] + ry[i] * GRID_SIZE
-            self.planned_path.append(np.array([world_x, world_y, self.state[2]]))
+        self.planned_path = [self.waypoints[0].copy()]
+        for i in range(len(self.waypoints) - 1):
+            start_point = self.waypoints[i]
+            goal_point = self.waypoints[i+1]
+            start_grid = gridCoords(start_point)
+            goal_grid = gridCoords(goal_point)
+            self.planner.updatePlanner(global_grid_map, start_grid, goal_grid)
+            rx, ry = self.planner.planning()
+            rx.reverse()
+            ry.reverse()
+
+            for i in range(1,len(rx)):
+                world_x = XLIM[0] + rx[i] * GRID_SIZE
+                world_y = YLIM[0] + ry[i] * GRID_SIZE
+                self.planned_path.append(np.array([world_x, world_y, self.state[2]]))
         return self.planned_path
     def update(self):
         if self.path_index >= len(self.planned_path):
@@ -85,9 +91,13 @@ if __name__ == "__main__":
         a = x + r * np.cos(theta)
         b = y + r * np.sin(theta)
         return a, b
-    initial_state = [TAR_STARTS[0], TAR_STARTS[1], TAR_STARTS[2]]
-    final_destination = [TAR_GOALS[0], TAR_GOALS[1], TAR_GOALS[2]]
-    target = Target(initial_state, final_destination)
+    target_waypoints = [
+        np.array([5.0, 5.0, 5.0]),   # Điểm A (Bắt đầu)
+        np.array([10.0, 9.0, 5.0]),  # Điểm B
+        np.array([15.0, 5.0, 5.0]),  # Điểm C
+        np.array([21.0, 5.0, 5.0])   # Điểm D (Kết thúc)
+    ]
+    target = Target(target_waypoints)
     target.generateTrajectory()
 
    
@@ -101,8 +111,8 @@ if __name__ == "__main__":
     planned_path_np = np.array(target.planned_path)
     ax.plot(planned_path_np[:, 0], planned_path_np[:, 1], 'g--', label='Planned Path (A*)')
 
-    ax.plot(initial_state[0], initial_state[1], 'bo', markersize=10, label='Start')
-    ax.plot(final_destination[0], final_destination[1], 'r*', markersize=15, label='Final Destination')
+    ax.plot(target.waypoints[0][0], target.waypoints[0][1], 'bo', markersize=10, label='Start')
+    ax.plot(target.final_destination[0], target.final_destination[1], 'r*', markersize=15, label='Final Destination')
     
     target_path_line, = ax.plot([], [], 'b-', linewidth=2, label='Actual Trajectory')
 
@@ -126,7 +136,7 @@ if __name__ == "__main__":
         
         path_history_np = np.array(target_path_history)
         target_path_line.set_data(path_history_np[:, 0], path_history_np[:, 1])
-        current_target_pos.set_data(target.state[0], target.state[1])
+        current_target_pos.set_data([target.state[0]], [target.state[1]])
         
         fig.canvas.draw()
         fig.canvas.flush_events()

@@ -115,20 +115,12 @@ class Robot:
         # add constraints CBF and formation
         for i in range(HORIZON_LENGTH):
             current_state = opt_states[i, :]
+            next_state = opt_states[i+1, :]
             current_pos = current_state[:3]
-            current_vel = current_state[3:]
-            current_control = opt_controls[i, :]
-            # Second-Order CBF
-            h_target = VIEWING_RADIUS**2 - ca.sumsqr(current_pos - target_pos)
-            h_dot_target = -2 * ca.mtimes((current_pos - target_pos).T, current_vel)
-            
-            Lf2_h_target = -2 * ca.sumsqr(current_vel)
-            LgLf_h_target = -2 * (current_pos - target_pos)
-            # h_ddot + 2*gamma*h_dot + gamma^2*h >= 0
-            # opti.subject_to(Lf2_h_target + ca.mtimes(LgLf_h_target, current_control.T) + \
-            #                 2 * CBF_GAMMA * h_dot_target + CBF_GAMMA**2 * h_target >= slack_cbf[i])
-            # opti.subject_to(slack_cbf[i] >= 0)
-
+            next_pos = next_state[:3]
+            h_k = VIEWING_RADIUS**2 - ca.sumsqr(current_pos - target_pos)
+            h_k_plus = VIEWING_RADIUS**2 - ca.sumsqr(next_pos - target_pos)
+            opti.subject_to(h_k_plus - (1 - DT_CBF_GAMMA) * h_k >= -slack_cbf[i])
 
         # velocity and control constraints
         for i in range(HORIZON_LENGTH):
