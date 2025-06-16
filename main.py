@@ -13,7 +13,7 @@ import target as Target
 if __name__ == "__main__":
 
     # Initialize target
-    target = Target.Target(TAR_STARTS, TAR_GOALS)
+    target = Target.Target(TAR_WAYPOINTS)
     target.generateTrajectory()
     target_traj = []
     

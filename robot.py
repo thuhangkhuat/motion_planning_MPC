@@ -107,10 +107,11 @@ class Robot:
             for other_robot in neighbor_robots:
                 if self.index >= other_robot.index: 
                     continue
-                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
+                # print(other_robot.states_prediction[i, :3])
+                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]), 1, 2)
                 # MPC constraint
-                dist_sq = ca.sumsqr(opt_states[i, :3] - other_pos)
-                opti.subject_to(dist_sq >= ROBOT_RADIUS**2)
+                dist_sq = ca.sumsqr(opt_states[i, :2] - other_pos)
+                opti.subject_to(dist_sq >= (2*ROBOT_RADIUS)**2)
 
         # add constraints CBF and formation
         for i in range(HORIZON_LENGTH):
@@ -120,6 +121,7 @@ class Robot:
             next_pos = next_state[:3]
             h_k = VIEWING_RADIUS**2 - ca.sumsqr(current_pos - target_pos)
             h_k_plus = VIEWING_RADIUS**2 - ca.sumsqr(next_pos - target_pos)
+            # opti.subject_to(h_k_plus - (1 - DT_CBF_GAMMA) * h_k >= 0)
             opti.subject_to(h_k_plus - (1 - DT_CBF_GAMMA) * h_k >= -slack_cbf[i])
 
         # velocity and control constraints

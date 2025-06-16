@@ -4,8 +4,11 @@ import numpy as np
 import math
 import pickle
 
-from config import *
 
+from config import *
+from fov import calculate_fov_corners
+
+COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 export = False
 if export:
     import cv2
@@ -58,6 +61,8 @@ if SCENARIO == 1:
     size = (8,3.5)
 elif SCENARIO == 2:
     size = (5,5)
+elif SCENARIO == 3:
+    size = (8,3.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -66,7 +71,7 @@ for iter in range(length):
     ax.cla()
 
     # Plot start and goal
-    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="Robot Starts")
+    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="UAV Starts")
     # ax.scatter(TAR_GOALS[0], TAR_GOALS[1], marker="^", s=50, label="Target")
 
     # Plot obstacles
@@ -81,12 +86,17 @@ for iter in range(length):
     ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
     ax.plot(target_trajectory[iter, 0], target_trajectory[iter, 1], 'rX', markersize=10, label="Target")
 
+    target_current_pos = target_trajectory[iter]
+    circle_x, circle_y = getCircle(target_current_pos[0], target_current_pos[1], VIEWING_RADIUS)
+    ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
+
     # Plot path
     for i in range(NUM_ROBOT):
+        robot_color = COLORS[i % len(COLORS)]
         path = data[i]["path"]
         traj_refs = data[i]["traj_refs"]
         # Plot path
-        plt.plot(path[:iter,1], path[:iter,2], label="Drone {}".format(i))
+        plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
         
         # Plot robot
         a, b = getCircle(path[iter,1], path[iter,2], ROBOT_RADIUS)
@@ -94,6 +104,13 @@ for iter in range(length):
         # plt.arrow(path[iter,0],  path[iter,1],
         #             path[iter,3]*percent,  path[iter,4]*percent,
         #             width=width, color='r')
+
+        # Plot FOV
+        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0]
+        fov_corners,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV)
+        if fov_corners is not None:
+            ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none', label='UAV FOV' if i == 0 else "")
+            ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
         if METHOD == 1:
