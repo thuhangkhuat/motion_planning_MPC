@@ -9,7 +9,7 @@ from config import *
 from fov import calculate_fov_corners
 
 COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-export = False
+export = True
 if export:
     import cv2
     image_array = []
@@ -71,7 +71,7 @@ for iter in range(length):
     ax.cla()
 
     # Plot start and goal
-    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="UAV Starts")
+    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50)
     # ax.scatter(TAR_GOALS[0], TAR_GOALS[1], marker="^", s=50, label="Target")
 
     # Plot obstacles
@@ -109,7 +109,7 @@ for iter in range(length):
         robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0]
         fov_corners,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV)
         if fov_corners is not None:
-            ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none', label='UAV FOV' if i == 0 else "")
+            ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none')
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference

@@ -16,7 +16,6 @@ if __name__ == "__main__":
     target = Target.Target(TAR_WAYPOINTS)
     target.generateTrajectory()
     target_traj = []
-    
     robots = []
 
     # Initialize Robot
@@ -35,7 +34,10 @@ if __name__ == "__main__":
             # compute velocity using nmpc
             start = time.time()
             for i in range(NUM_ROBOT):
-                robots[i].goal = target.state.copy()
+                offset_vector = FORMATION_OFFSETS[i]
+                # print(f"[INFO] Robot {i} offset vector: {offset_vector}")
+                virtual_target_pos = target.state.copy()  + offset_vector
+                robots[i].goal = virtual_target_pos
                 robots[i].computeControlSignal(robots)
                 compute_times.append(time.time()-start)
             iter += 1
