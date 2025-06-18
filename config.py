@@ -19,7 +19,7 @@ HORIZON_LENGTH = 10
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
-SCENARIO = 3
+SCENARIO = 2
 if SCENARIO == 1:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
@@ -57,29 +57,32 @@ if SCENARIO == 1:
     GOALS = STARTS + np.array([21., 0., 0.])
     
     # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
-                          [ 7.0, 6.0, 0.8],
-                          [ 7.0, 9.0, 0.8],
-                          [ 9.0, 1.5, 0.8],
-                          [12.0, 4.0, 0.8],
-                          [12.0, 7.5, 0.8],
-                          [15.0, 1.5, 0.8],
-                          [15.0, 6.0, 0.8],
-                          [17.0, 9.0, 0.8],
-                          [19.0, 3.5, 0.8],
-                          [19.0, 6.5, 0.8]])
+    # OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
+    #                       [ 7.0, 6.0, 0.8],
+    #                       [ 7.0, 9.0, 0.8],
+    #                       [ 9.0, 1.5, 0.8],
+    #                       [12.0, 4.0, 0.8],
+    #                       [12.0, 7.5, 0.8],
+    #                       [15.0, 1.5, 0.8],
+    #                       [15.0, 6.0, 0.8],
+    #                       [17.0, 9.0, 0.8],
+    #                       [19.0, 3.5, 0.8],
+    #                       [19.0, 6.5, 0.8]])
+    OBSTACLES = np.array([])
     XLIM = [0, 25]
     YLIM = [0, 10]
 elif SCENARIO == 2:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([3.0, 2.0, 5.0]),np.array([21.0, 8.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([10.0, 7.0, 5.0]),
+    #                  np.array([15.0, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([3.0, 2.0, 5.0]),np.array([21.0, 7.0, 5.0])]
     TAR_EPSILON = 0.1
 
     # Parameters of the environment
     VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    MIN_SEPARATION = 1.0    # d_min: minimum distance between robots
-    MAX_SEPARATION = 8.0    # d_max: maximum distance between robots
+    DESIRED_SEPARATION = 1.0   # desired distance between robots
+    OFFSET_SEPARATION = 0.5    # offset distance between robots
     # Parameters of FOV
     HFOV = 60.0             # Horizontal field of view
     VFOV = 80.0             # Vertical field of view
@@ -89,31 +92,34 @@ elif SCENARIO == 2:
     W_u = 4e-1
     W_col = 1.5
     W_slack = 100.0
-    W_form_dist = 10.0
-    W_form_struct = 3.0
+    W_form_dist = 50.0
+    W_form_struct = 0.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5 
     STARTS = np.array([[1., 4., 3.],
                        [1., 5., 3.],
                        [1., 6., 3.],])
+                    #    [1., 6.5, 3.],
+                    #    [1., 7., 3.]])
     NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS, arc_angle_deg=90)
+    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS - 1, arc_angle_deg=90)
 
     GOALS = STARTS + np.array([21., 0., 0.])
     
     # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
-                          [ 7.0, 6.0, 0.8],
-                          [ 7.0, 9.0, 0.8],
-                          [ 9.0, 1.5, 0.8],
-                          [12.0, 4.0, 0.8],
-                          [12.0, 7.5, 0.8],
-                          [15.0, 1.5, 0.8],
-                          [15.0, 6.0, 0.8],
-                          [17.0, 9.0, 0.8],
-                          [19.0, 3.5, 0.8],
-                          [19.0, 6.5, 0.8]])
+    # OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
+    #                       [ 7.0, 6.0, 0.8],
+    #                       [ 7.0, 9.0, 0.8],
+    #                       [ 9.0, 1.5, 0.8],
+    #                       [12.0, 4.0, 0.8],
+    #                       [12.0, 7.5, 0.8],
+    #                       [15.0, 1.5, 0.8],
+    #                       [15.0, 6.0, 0.8],
+    #                       [17.0, 9.0, 0.8],
+    #                       [19.0, 3.5, 0.8],
+    #                       [19.0, 6.5, 0.8]])
+    OBSTACLES = np.array([])
     XLIM = [0, 25]
     YLIM = [0, 10]
 elif SCENARIO == 3:
@@ -146,7 +152,7 @@ elif SCENARIO == 3:
     # STARTS = np.array([[2., 3., 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS - 0.5, arc_angle_deg=40)
+    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS - 0.5, arc_angle_deg=180)
     # Obstacle x, y, r
     OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
                           [ 7.0, 6.0, 0.8],

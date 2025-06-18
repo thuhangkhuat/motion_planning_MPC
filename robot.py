@@ -66,9 +66,6 @@ class Robot:
         """
         scan_data = self.lidar.senseObstacle(np.concatenate([self.state[:2], [0]]), robots)
         self.traj_ref = self.getOrientedGoalTrajectory(scan_data, self.goal)
-        # if self.planner_update_counter % self.PLANNER_UPDATE_RATE == 0:
-        #     self.traj_ref = self.getOrientedGoalTrajectory(scan_data, self.goal)
-        # self.planner_update_counter += 1
 
         target_pos = self.goal[:3].reshape(1, 3) 
         neighbor_robots = self.getNeighbors(robots)
@@ -107,7 +104,6 @@ class Robot:
             for other_robot in neighbor_robots:
                 if self.index >= other_robot.index: 
                     continue
-                # print(other_robot.states_prediction[i, :3])
                 other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]), 1, 2)
                 # MPC constraint
                 dist_sq = ca.sumsqr(opt_states[i, :2] - other_pos)
@@ -121,6 +117,7 @@ class Robot:
             next_pos = next_state[:3]
             h_k = VIEWING_RADIUS**2 - ca.sumsqr(current_pos - target_pos)
             h_k_plus = VIEWING_RADIUS**2 - ca.sumsqr(next_pos - target_pos)
+            
             # opti.subject_to(h_k_plus - (1 - DT_CBF_GAMMA) * h_k >= 0)
             opti.subject_to(h_k_plus - (1 - DT_CBF_GAMMA) * h_k >= -slack_cbf[i])
 
@@ -210,7 +207,7 @@ class Robot:
     def costTracking(self, traj, traj_ref):
         cost_tra = 0
         for i in range(HORIZON_LENGTH):
-            pos_rel = traj[i,:3].T - traj_ref[i,:3]
+            pos_rel = traj[i,:2].T - traj_ref[i,:2]
             cost_tra += ca.mtimes(pos_rel.T, pos_rel)
         return W_tra*cost_tra
     
@@ -239,7 +236,7 @@ class Robot:
                     continue
                 other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
                 dist_sq = ca.sumsqr(current_pos - other_pos)
-                cost_dist += ca.exp(-5 * (dist_sq - MIN_SEPARATION**2))
+                cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
         for i in range(HORIZON_LENGTH):
             pos_i = traj[i, :3]
             for j in range(len(neighbors)):
@@ -250,7 +247,8 @@ class Robot:
                     vec_ik = pos_k - pos_i
                     area_sq = 0.25 * (vec_ij[0]*vec_ik[1] - vec_ij[1]*vec_ik[0])**2
                     epsilon = 1e-6
-                    cost_struct -= ca.log(area_sq + epsilon)
+                    cost_struct = 0.0
+                    # cost_struct -= ca.log(area_sq + epsilon)
 
         return {'dist': cost_dist, 'struct': cost_struct}
 
