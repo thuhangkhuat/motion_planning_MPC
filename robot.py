@@ -136,10 +136,10 @@ class Robot:
             con = opt_controls[i, :]
             opti.subject_to(ca.sumsqr(con) <= UMAX**2)
         
-        opts_setting = {'ipopt.max_iter': 200,   #1e5
+        opts_setting = {'ipopt.max_iter': 500,   #1e5
                         'ipopt.print_level': 0,
                         'ipopt.tol': 1e-4,  #1e-6
-                        'ipopt.acceptable_tol': 1e-3,  #1e-6
+                        'ipopt.acceptable_tol': 1e-2,  #1e-6
                         'print_time': 0}
         opti.solver('ipopt', opts_setting)
 
@@ -219,9 +219,12 @@ class Robot:
             obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
             obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
             for i in range(HORIZON_LENGTH):
-                obs_rel = traj[i,:2].T - np.array([obs_x, obs_y])
+                # obs_rel = traj[i,:2].T - np.array([obs_x, obs_y])
                 # cost_col += 1./(1+ca.exp(4*(ca.mtimes(obs_rel.T, obs_rel) - ROBOT_RADIUS)))
-                cost_col -= ca.log(ca.sumsqr(obs_rel) - ROBOT_RADIUS**2)
+                # cost_col -= ca.log(ca.sumsqr(obs_rel) - ROBOT_RADIUS**2)
+                dist_sq = ca.sumsqr(traj[i,:2] - ca.DM([obs_x, obs_y]).T)
+                margin = dist_sq - ROBOT_RADIUS**2
+                cost_col += 1 / (margin + 1e-4)
         return W_col*cost_col
     
     def costFormation(self, traj, neighbors):
@@ -237,18 +240,19 @@ class Robot:
                 other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
                 dist_sq = ca.sumsqr(current_pos - other_pos)
                 cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
-        for i in range(HORIZON_LENGTH):
-            pos_i = traj[i, :3]
-            for j in range(len(neighbors)):
-                for k in range(j + 1, len(neighbors)): 
-                    pos_j = ca.reshape(ca.DM(neighbors[j].states_prediction[i, :3]), 1, 3)
-                    pos_k = ca.reshape(ca.DM(neighbors[k].states_prediction[i, :3]), 1, 3)
-                    vec_ij = pos_j - pos_i
-                    vec_ik = pos_k - pos_i
-                    area_sq = 0.25 * (vec_ij[0]*vec_ik[1] - vec_ij[1]*vec_ik[0])**2
-                    epsilon = 1e-6
-                    cost_struct = 0.0
-                    # cost_struct -= ca.log(area_sq + epsilon)
+        cost_struct = 0.0
+        # for i in range(HORIZON_LENGTH):
+        #     pos_i = traj[i, :3]
+        #     for j in range(len(neighbors)):
+        #         for k in range(j + 1, len(neighbors)): 
+        #             pos_j = ca.reshape(ca.DM(neighbors[j].states_prediction[i, :3]), 1, 3)
+        #             pos_k = ca.reshape(ca.DM(neighbors[k].states_prediction[i, :3]), 1, 3)
+        #             vec_ij = pos_j - pos_i
+        #             vec_ik = pos_k - pos_i
+        #             area_sq = 0.25 * (vec_ij[0]*vec_ik[1] - vec_ij[1]*vec_ik[0])**2
+        #             epsilon = 1e-6
+        #             cost_struct = 0.0
+        #             # cost_struct -= ca.log(area_sq + epsilon)
 
         return {'dist': cost_dist, 'struct': cost_struct}
 

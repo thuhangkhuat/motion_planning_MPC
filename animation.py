@@ -3,16 +3,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import pickle
-
+import math
 
 from config import *
 from fov import calculate_fov_corners
+
 
 COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 export = True
 if export:
     import cv2
     image_array = []
+STANDARD_SIZE = (1280, 720) 
 
 # For drone representation
 p1 = np.array([3*ROBOT_RADIUS / 4, 0, 0, 1]).T
@@ -21,10 +23,14 @@ p3 = np.array([0, 3*ROBOT_RADIUS / 4, 0, 1]).T
 p4 = np.array([0,-3*ROBOT_RADIUS / 4, 0, 1]).T
 
 def transformation_matrix(data):
-    x = data[0]; y = data[1]; z = data[2]; psi = data[3]+np.pi/4
-    return np.array([[np.cos(psi), -np.sin(psi), 0, x],
-                     [np.sin(psi), np.cos(psi), 0, y],
-                     [0, 0, 1, z]])
+    x, y, z, psi = data[0], data[1], data[2], data[3]
+    psi_rotated = psi + np.pi / 4
+    c, s = np.cos(psi_rotated), np.sin(psi_rotated)
+    return np.array([
+        [c, -s, 0, x],
+        [s,  c, 0, y],
+        [0,  0, 1, z]
+    ])
 
 def getCircle(x,y,r):
     theta = np.linspace( 0 , 2 * np.pi , 150 )   
@@ -60,9 +66,9 @@ target_trajectory = data[0]["tar_traj"]
 if SCENARIO == 1:
     size = (8,3.5)
 elif SCENARIO == 2:
-    size = (5,5)
+    size = (12,5.5)
 elif SCENARIO == 3:
-    size = (8,3.5)
+    size = (12,5.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -95,15 +101,30 @@ for iter in range(length):
         robot_color = COLORS[i % len(COLORS)]
         path = data[i]["path"]
         traj_refs = data[i]["traj_refs"]
+
+        # Plot drone
+        robot_current_pos = path[iter, 1:4]
+        robot_current_vel = path[iter, 4:6]
+        if np.linalg.norm(robot_current_vel) > 1e-5:
+            yaw = math.atan2(robot_current_vel[1], robot_current_vel[0])
+        else:
+            yaw = 0 
+        T = transformation_matrix([robot_current_pos[0], robot_current_pos[1], robot_current_pos[2], yaw])
+        p1_t = np.matmul(T, p1)
+        p2_t = np.matmul(T, p2)
+        p3_t = np.matmul(T, p3)
+        p4_t = np.matmul(T, p4)
+
+        ax.plot([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], 'k-', linewidth=1.5)
+        ax.plot([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], 'k-', linewidth=1.5)
+
+        ax.scatter([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], s=50, c='b', marker='o')
+        ax.scatter([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], s=50, c='r', marker='o')
+
+
         # Plot path
         plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
         
-        # Plot robot
-        a, b = getCircle(path[iter,1], path[iter,2], ROBOT_RADIUS)
-        plt.plot(a, b, '-b')
-        # plt.arrow(path[iter,0],  path[iter,1],
-        #             path[iter,3]*percent,  path[iter,4]*percent,
-        #             width=width, color='r')
 
         # Plot FOV
         robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0]
@@ -113,8 +134,8 @@ for iter in range(length):
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        if METHOD == 1:
-            plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
+        # if METHOD == 1:
+        #     plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
 
     # ax.legend()
     ax.grid(True)
