@@ -136,7 +136,7 @@ class Robot:
             con = opt_controls[i, :]
             opti.subject_to(ca.sumsqr(con) <= UMAX**2)
         
-        opts_setting = {'ipopt.max_iter': 500,   #1e5
+        opts_setting = {'ipopt.max_iter': 2000,   #1e5
                         'ipopt.print_level': 0,
                         'ipopt.tol': 1e-4,  #1e-6
                         'ipopt.acceptable_tol': 1e-2,  #1e-6

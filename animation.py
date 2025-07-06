@@ -69,6 +69,8 @@ elif SCENARIO == 2:
     size = (12,5.5)
 elif SCENARIO == 3:
     size = (12,5.5)
+elif SCENARIO == 4:
+    size = (12,5.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -134,8 +136,8 @@ for iter in range(length):
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        # if METHOD == 1:
-        #     plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
+        if METHOD == 1:
+            plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
 
     # ax.legend()
     ax.grid(True)
