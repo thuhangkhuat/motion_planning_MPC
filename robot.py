@@ -127,14 +127,14 @@ class Robot:
             vel_sq = VMAX**2 - ca.mtimes([vel, vel.T])
             opti.subject_to(vel_sq >= 0)
 
-            con = opt_controls[i,:]
-            con_sq = UMAX**2 - ca.mtimes([con, con.T])
-            opti.subject_to(con_sq >= 0)
-        for i in range(HORIZON_LENGTH):
-            vel = opt_states[i+1, 3:]
-            opti.subject_to(ca.sumsqr(vel) <= VMAX**2)
-            con = opt_controls[i, :]
-            opti.subject_to(ca.sumsqr(con) <= UMAX**2)
+        #     con = opt_controls[i,:]
+        #     con_sq = UMAX**2 - ca.mtimes([con, con.T])
+        #     opti.subject_to(con_sq >= 0)
+        # for i in range(HORIZON_LENGTH):
+        #     vel = opt_states[i+1, 3:]
+        #     opti.subject_to(ca.sumsqr(vel) <= VMAX**2)
+        #     con = opt_controls[i, :]
+        #     opti.subject_to(ca.sumsqr(con) <= UMAX**2)
         
         opts_setting = {'ipopt.max_iter': 2000,   #1e5
                         'ipopt.print_level': 0,

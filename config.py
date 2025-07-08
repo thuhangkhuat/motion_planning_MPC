@@ -2,6 +2,7 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from formation import generate_circular_formation
+from formation3 import generate_safe_leader_arc_formation
 
 TIMESTEP = 0.1
 ROBOT_RADIUS = 0.25
@@ -19,7 +20,7 @@ HORIZON_LENGTH = 10
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
-SCENARIO = 4
+SCENARIO = 5
 if SCENARIO == 1:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
@@ -170,36 +171,36 @@ elif SCENARIO == 3:
 elif SCENARIO == 4:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([5.0, 2.0, 5.0]),np.array([15.0, 7.0, 5.0]),
-                     np.array([15.0, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([2.5, 5.0, 5.0]),np.array([10.0, 7.0, 5.0]),
+                     np.array([15.0, 5.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([25.0, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([22.0, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
     VIEWING_RADIUS = 3.5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = 1.5   # desired distance between robots
+    DESIRED_SEPARATION = 2   # desired distance between robots
     
     # Parameters of FOV
     HFOV = 60.0             # Horizontal field of view
     VFOV = 80.0             # Vertical field of view
     # Weights for MPC
-    W_tra = 0.5
+    W_tra = 5.0
     W_u = 4e-1
-    W_col = 2.5
-    W_slack = 2
-    W_form_dist = 2.0
+    W_col = 5.0
+    W_slack = 20
+    W_form_dist = 5.0
     W_form_struct = 0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1.5, 5, 3.],
-                       [1.5, 3, 3.],
-                       [1.5, 4, 3.],
-                       [1.5, 6, 3.],
-                       [1.5, 7, 3.]])
+    STARTS = np.array([[0.5, 5, 3.],
+                       [0.5, 3, 3.],
+                       [0.5, 4, 3.],
+                       [0.5, 6, 3.],
+                       [0.5, 7, 3.]])
     # STARTS = np.array([[2., 3., 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-1, arc_angle_deg=180)
+    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.9, arc_angle_deg=180)
     # Obstacle x, y, r
     # OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
     #                       [ 7.0, 5.9, 0.8],
@@ -213,8 +214,58 @@ elif SCENARIO == 4:
     #                       [19.0, 3.5, 0.8],
     #                       [19.0, 6.5, 0.8]])
     OBSTACLES = np.array([])
-    XLIM = [0, 25]
-    YLIM = [0, 10]
+    XLIM = [0, 27]
+    YLIM = [0, 14]
+
+elif SCENARIO == 5:
+    #Parameters of target
+    TAR_MAX_SPEED = 0.8
+    TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
+                     np.array([15.0, 7.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([2.5, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_EPSILON = 0.1
+
+    VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
+    DESIRED_SEPARATION = 1.5   # desired distance between robots
+    
+    # Parameters of FOV
+    HFOV = 60.0             # Horizontal field of view
+    VFOV = 80.0             # Vertical field of view
+    # Weights for MPC
+    W_tra = 3.0
+    W_u = 4e-1
+    W_col = 2.0
+    W_slack = 10.0
+    W_form_dist = 5.0
+    W_form_struct = 0
+
+    # Weights for CBF
+    DT_CBF_GAMMA = 0.5
+    STARTS = np.array([[1.5, 5, 3.],
+                       [1.5, 3, 3.],
+                       [1.5, 4, 3.],
+                       [1.5, 6, 3.],
+                       [1.5, 7, 3.]])
+    # STARTS = np.array([[2., 3., 5.]])
+    GOALS = STARTS + np.array([21., 0., 0.])
+    NUM_ROBOT = STARTS.shape[0]
+    # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)
+    FORMATION_OFFSETS = generate_safe_leader_arc_formation(NUM_ROBOT, VIEWING_RADIUS, DESIRED_SEPARATION)
+    # Obstacle x, y, r
+    OBSTACLES = np.array([[ 7.0, 2.5, 0.5],
+                          [ 7.0, 5.0, 0.5],
+                          [ 7.0, 9.0, 0.5],
+                          [ 9.0, 1.5, 0.5],
+                          [12.0, 4.0, 0.5],
+                          [12.0, 9.5, 0.5],
+                          [15.0, 1.5, 0.5],
+                          [15.0, 4.5, 0.5],
+                          [17.0, 9.0, 0.5],
+                          [19.0, 3.5, 0.5],
+                          [19.0, 6.5, 0.5]])
+    # OBSTACLES = np.array([])
+    XLIM = [0, 22]
+    YLIM = [0, 12]
 
 FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)
