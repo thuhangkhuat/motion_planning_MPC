@@ -232,7 +232,7 @@ elif SCENARIO == 5:
     HFOV = 60.0             # Horizontal field of view
     VFOV = 80.0             # Vertical field of view
     # Weights for MPC
-    W_tra = 3.0
+    W_tra = 3
     W_u = 4e-1
     W_col = 2.0
     W_slack = 10.0
