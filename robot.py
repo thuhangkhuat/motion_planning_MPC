@@ -1,5 +1,6 @@
 import numpy as np
 import casadi as ca
+import pydecomp as pdc
 
 from lidar import LidarScanner
 from planner import AStar
@@ -26,11 +27,9 @@ class Robot:
 
         self.lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/45)
-        self.planner = AStar()
         
         # Store robot path
         self.path = []
-        self.traj_refs = []
         # self.path = [np.concatenate([[self.time_stamp], self.state, self.control])]
 
         self.states_prediction = np.ones((HORIZON_LENGTH+1, self.n_state))*self.state
@@ -65,9 +64,9 @@ class Robot:
         Computes control velocity of the copter
         """
         scan_data = self.lidar.senseObstacle(np.concatenate([self.state[:2], [0]]), robots)
-        self.traj_ref = self.getOrientedGoalTrajectory(scan_data, self.goal)
-
+        obstacle_points = self.lidar.getObstaclePoints(np.concatenate([self.state[:2], [0]]), OBSTACLES)
         target_pos = self.goal[:3].reshape(1, 3) 
+        list_A, list_b = self.generateSafeCorridor(self.state, target_pos, obstacle_points, visualize=False)
         neighbor_robots = self.getNeighbors(robots)
         
         opti = ca.Opti()
@@ -82,10 +81,23 @@ class Robot:
         ])
         # f = lambda x_, u_: ca.horzcat(x_[3:], u_ - D_FRAC * x_[3:])
 
+
         opti.subject_to(opt_states[0, :] == np.array([self.state]))
         for i in range(HORIZON_LENGTH):
             x_next = opt_states[i, :] + f(opt_states[i, :], opt_controls[i, :])*TIMESTEP
             opti.subject_to(opt_states[i+1, :] == x_next)
+
+        # add constraints with conver polygon -> liner constraints
+        if list_A:
+            active_A, active_b = None, None
+            for A, b in zip(list_A, list_b):
+                if np.all(A @ self.state[:2] - b.flatten() <= 1e-5):
+                    active_A = A
+                    active_b = b
+                    break
+            if active_A is not None:
+                for i in range(HORIZON_LENGTH + 1):
+                    opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b)
 
         # add constraints to obstacle
         ang, dist = scan_data
@@ -204,11 +216,9 @@ class Robot:
             cost_u += ca.sumsqr(control)
         return W_u*cost_u
 
-    def costTracking(self, traj, traj_ref):
+    def costTracking(self, traj):
         cost_tra = 0
-        for i in range(HORIZON_LENGTH):
-            pos_rel = traj[i,:2].T - traj_ref[i,:2]
-            cost_tra += ca.mtimes(pos_rel.T, pos_rel)
+        cost_tra = ca.sumsqr(traj[-1, :2] - self.goal[:2])
         return W_tra*cost_tra
     
     def costCollision(self, traj, scan_data):
@@ -241,19 +251,6 @@ class Robot:
                 dist_sq = ca.sumsqr(current_pos - other_pos)
                 cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
         cost_struct = 0.0
-        # for i in range(HORIZON_LENGTH):
-        #     pos_i = traj[i, :3]
-        #     for j in range(len(neighbors)):
-        #         for k in range(j + 1, len(neighbors)): 
-        #             pos_j = ca.reshape(ca.DM(neighbors[j].states_prediction[i, :3]), 1, 3)
-        #             pos_k = ca.reshape(ca.DM(neighbors[k].states_prediction[i, :3]), 1, 3)
-        #             vec_ij = pos_j - pos_i
-        #             vec_ik = pos_k - pos_i
-        #             area_sq = 0.25 * (vec_ij[0]*vec_ik[1] - vec_ij[1]*vec_ik[0])**2
-        #             epsilon = 1e-6
-        #             cost_struct = 0.0
-        #             # cost_struct -= ca.log(area_sq + epsilon)
-
         return {'dist': cost_dist, 'struct': cost_struct}
 
     def predictTrajectory(self, state, controls):
@@ -267,7 +264,6 @@ class Robot:
             position = state[:3]
             velocity = state[3:]
             control = controls[self.n_control*i:self.n_control*(i+1)]
-
             next_position = position + velocity*TIMESTEP
             next_velocity = velocity + (control-D_FRAC*velocity)*TIMESTEP 
             state = np.concatenate([next_position, next_velocity])
@@ -286,6 +282,30 @@ class Robot:
             if distance < SENSING_NEIGHBOR:
                 neighbors.append(other_robot)
         return neighbors
+
+
+
+    def generateSafeCorridor(pose, goal, obstacle_points, visualize=False):
+        """
+        Create convex polygon using pydecomp
+        """
+        if obstacle_points.shape[0] < 3:
+            return [], []
+        start = pose[:2]
+        path_reference = np.array([start, goal[:2]])
+        box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
+        
+        try:
+            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_reference, box)
+            if visualize:
+                ax = pdc.visualize_environment(Al=list_A, bl=list_b, p=path_reference, planar=True)
+                ax.scatter(obstacle_points[:, 0], obstacle_points[:, 1], c='red', s=15, label='Lidar Points', zorder=10)
+                ax.plot(pose[0], pose[1], 'go', markersize=10, label='UAV Start')
+                ax.plot(goal[0], goal[1], 'bo', markersize=10, label='Goal')
+                plt.title('Safe Corridor Generation'); plt.legend(); plt.grid(True); plt.axis('equal'); plt.show()
+            return list_A, list_b
+        except Exception:
+            return [], []
     
     @staticmethod
     def createGridMap(data, pose, goal):

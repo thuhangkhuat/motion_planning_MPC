@@ -36,8 +36,8 @@ if __name__ == "__main__":
             for i in range(NUM_ROBOT):
                 offset_vector = FORMATION_OFFSETS[i]
                 # print(f"[INFO] Robot {i} offset vector: {offset_vector}")
-                virtual_target_pos = target.state.copy()  + offset_vector
-                robots[i].goal = virtual_target_pos
+                # virtual_target_pos = target.state.copy()  + offset_vector
+                robots[i].goal = target.state.copy()
                 robots[i].computeControlSignal(robots)
                 compute_times.append(time.time()-start)
             iter += 1
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         for i in range(NUM_ROBOT):
             r = {}
             r["path"] = np.array(robots[i].path)
-            r["traj_refs"] = np.array(robots[i].traj_refs)
+            # r["traj_refs"] = np.array(robots[i].traj_refs)
             r["tar_traj"] = np.array(target_traj)
             data[i] = r
         with open(FILE_NAME, 'wb') as file:

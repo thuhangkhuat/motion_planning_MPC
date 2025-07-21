@@ -241,11 +241,7 @@ elif SCENARIO == 5:
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1.5, 5, 3.],
-                       [1.5, 3, 3.],
-                       [1.5, 4, 3.],
-                       [1.5, 6, 3.],
-                       [1.5, 7, 3.]])
+    STARTS = np.array([[1.5, 5, 3.]])
     # STARTS = np.array([[2., 3., 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]

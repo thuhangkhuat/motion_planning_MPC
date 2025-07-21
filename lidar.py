@@ -7,7 +7,7 @@ from config import *
 class LidarScanner:
     def __init__(self, range_min=0.1, range_max=100.0,
                             angle_min=-math.pi/2, angle_max = math.pi/2,
-                            resolution=math.pi/180, noise=0.01):
+                            resolution=math.pi/90, noise=0.01):
         self.range_min = range_min
         self.range_max = range_max
         self.angle_min = angle_min
@@ -75,6 +75,19 @@ class LidarScanner:
         angle = angle[idx]
         data = data[idx]
         return angle, data
+    
+    def getObstaclePoints(self, pose, obstacles):
+        scan_angles, scan_ranges = self.senseObstacle(pose, obstacles)
+        valid_indices = scan_ranges < self.range_max
+        
+        detected_angles = scan_angles[valid_indices]
+        detected_ranges = scan_ranges[valid_indices]
+        
+        obstacle_points = np.vstack([
+            pose[0] + detected_ranges * np.cos(detected_angles),
+            pose[1] + detected_ranges * np.sin(detected_angles)]).T
+        
+        return obstacle_points
 
 def getCircle(x,y,r):
     theta = np.linspace(0, 2*np.pi, 50)   
