@@ -156,7 +156,7 @@ class Robot:
         opti.solver('ipopt', opts_setting)
 
         # cost function
-        obj = self.costFunction(opt_states, opt_controls, self.traj_ref, scan_data,slack_cbf, neighbor_robots)
+        obj = self.costFunction(opt_states, opt_controls, scan_data,slack_cbf, neighbor_robots)
         opti.minimize(obj)
 
         # provide the initial guess of the optimization targets
@@ -195,9 +195,9 @@ class Robot:
                 path.append(goal)
         return np.array(path)
 
-    def costFunction(self, opt_states, opt_controls, traj_ref, scan_data, slack_vars, neighbors):
+    def costFunction(self, opt_states, opt_controls, scan_data, slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
-        c_tra = self.costTracking(opt_states, traj_ref)
+        c_tra = self.costTracking(opt_states)
         c_col = self.costCollision(opt_states, scan_data)
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
@@ -285,7 +285,7 @@ class Robot:
 
 
 
-    def generateSafeCorridor(pose, goal, obstacle_points, visualize=False):
+    def generateSafeCorridor(self,pose, goal, obstacle_points, visualize=False):
         """
         Create convex polygon using pydecomp
         """
