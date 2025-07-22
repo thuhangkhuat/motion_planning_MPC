@@ -154,8 +154,8 @@ for iter in range(length):
         
 
         # Plot FOV
-        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0]
-        fov_corners,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV)
+        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0,path[iter, 1:][3],path[iter, 1:][4]]
+        fov_corners,_,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV,prev_yaw=0.0)
         if fov_corners is not None:
             ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none')
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)

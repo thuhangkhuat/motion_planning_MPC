@@ -229,8 +229,8 @@ elif SCENARIO == 5:
     DESIRED_SEPARATION = 1.5   # desired distance between robots
     
     # Parameters of FOV
-    HFOV = 60.0             # Horizontal field of view
-    VFOV = 80.0             # Vertical field of view
+    HFOV = 80.0             # Horizontal field of view
+    VFOV = 60.0             # Vertical field of view
     # Weights for MPC
     W_tra = 3
     W_u = 4e-1
