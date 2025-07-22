@@ -64,6 +64,7 @@ if __name__ == "__main__":
             r["path"] = np.array(robots[i].path)
             # r["traj_refs"] = np.array(robots[i].traj_refs)
             r["tar_traj"] = np.array(target_traj)
+            r["corridors"] = np.array(robots[i].corridors)
             data[i] = r
         with open(FILE_NAME, 'wb') as file:
             pickle.dump(data, file, protocol=pickle.HIGHEST_PROTOCOL)

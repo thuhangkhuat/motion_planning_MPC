@@ -221,7 +221,7 @@ elif SCENARIO == 5:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
     TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
-                     np.array([15.0, 7.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+                     np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([2.5, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
@@ -241,24 +241,26 @@ elif SCENARIO == 5:
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1.5, 5, 3.]])
+    STARTS = np.array([[1.5, 5, 3.],])
+                    #    [1.5, 4, 3.],
+                    #    [1.5, 6, 3.],])
     # STARTS = np.array([[2., 3., 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)
     FORMATION_OFFSETS = generate_safe_leader_arc_formation(NUM_ROBOT, VIEWING_RADIUS, DESIRED_SEPARATION)
     # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.5],
-                          [ 7.0, 5.0, 0.5],
-                          [ 7.0, 9.0, 0.5],
-                          [ 9.0, 1.5, 0.5],
-                          [12.0, 4.0, 0.5],
-                          [12.0, 9.5, 0.5],
-                          [15.0, 1.5, 0.5],
-                          [15.0, 4.5, 0.5],
-                          [17.0, 9.0, 0.5],
-                          [19.0, 3.5, 0.5],
-                          [19.0, 6.5, 0.5]])
+    OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
+                          [ 7.0, 5.0, 0.8],
+                          [ 7.0, 9.0, 0.8],
+                          [ 9.0, 1.5, 0.8],
+                          [12.0, 4.0, 0.8],
+                          [12.0, 9.5, 0.8],
+                          [15.0, 1.5, 0.8],
+                          [15.0, 4.5, 0.8],
+                          [17.0, 9.0, 0.8],
+                          [19.0, 3.5, 0.8],
+                          [19.0, 6.5, 0.8]])
     # OBSTACLES = np.array([])
     XLIM = [0, 22]
     YLIM = [0, 12]

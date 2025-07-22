@@ -1,5 +1,6 @@
 import numpy as np
 import casadi as ca
+
 import pydecomp as pdc
 
 from lidar import LidarScanner
@@ -28,6 +29,8 @@ class Robot:
         self.lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/45)
         
+        #Store the corridor
+        self.corridors = []
         # Store robot path
         self.path = []
         # self.path = [np.concatenate([[self.time_stamp], self.state, self.control])]
@@ -53,7 +56,7 @@ class Robot:
 
         # Store
         self.path.append(np.concatenate([[self.time_stamp], self.state, self.control]))
-        self.traj_refs.append(self.traj_ref)
+        # self.traj_refs.append(self.traj_ref)
 
         # Shift predictive values
         self.states_prediction[:-1,:] = self.states_prediction[1:,:]
@@ -66,7 +69,7 @@ class Robot:
         scan_data = self.lidar.senseObstacle(np.concatenate([self.state[:2], [0]]), robots)
         obstacle_points = self.lidar.getObstaclePoints(np.concatenate([self.state[:2], [0]]), OBSTACLES)
         target_pos = self.goal[:3].reshape(1, 3) 
-        list_A, list_b = self.generateSafeCorridor(self.state, target_pos, obstacle_points, visualize=False)
+        list_A, list_b = self.generateSafeCorridor(self.state, target_pos, obstacle_points)
         neighbor_robots = self.getNeighbors(robots)
         
         opti = ca.Opti()
@@ -95,6 +98,7 @@ class Robot:
                     active_A = A
                     active_b = b
                     break
+            self.corridors.append({'A': active_A, 'b': active_b})
             if active_A is not None:
                 for i in range(HORIZON_LENGTH + 1):
                     opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b)
@@ -198,7 +202,8 @@ class Robot:
     def costFunction(self, opt_states, opt_controls, scan_data, slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
         c_tra = self.costTracking(opt_states)
-        c_col = self.costCollision(opt_states, scan_data)
+        # c_col = self.costCollision(opt_states, scan_data)
+        c_col = 0
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
         total = c_tra + c_u + c_col + c_slack + W_form_dist * c_form['dist'] + W_form_struct * c_form['struct']
@@ -218,7 +223,7 @@ class Robot:
 
     def costTracking(self, traj):
         cost_tra = 0
-        cost_tra = ca.sumsqr(traj[-1, :2] - self.goal[:2])
+        cost_tra = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
         return W_tra*cost_tra
     
     def costCollision(self, traj, scan_data):
@@ -285,69 +290,26 @@ class Robot:
 
 
 
-    def generateSafeCorridor(self,pose, goal, obstacle_points, visualize=False):
+    def generateSafeCorridor(self,pose, goal, obstacle_points):
         """
         Create convex polygon using pydecomp
         """
-        if obstacle_points.shape[0] < 3:
+        # print(obstacle_points)
+        if obstacle_points.shape[0] < 1: 
             return [], []
+            
         start = pose[:2]
-        path_reference = np.array([start, goal[:2]])
+
+        path_reference = np.array([start, goal.flatten()[:2]])
         box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
-        
+
+       
         try:
             list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_reference, box)
-            if visualize:
-                ax = pdc.visualize_environment(Al=list_A, bl=list_b, p=path_reference, planar=True)
-                ax.scatter(obstacle_points[:, 0], obstacle_points[:, 1], c='red', s=15, label='Lidar Points', zorder=10)
-                ax.plot(pose[0], pose[1], 'go', markersize=10, label='UAV Start')
-                ax.plot(goal[0], goal[1], 'bo', markersize=10, label='Goal')
-                plt.title('Safe Corridor Generation'); plt.legend(); plt.grid(True); plt.axis('equal'); plt.show()
             return list_A, list_b
-        except Exception:
+        except Exception as e:
+            print(f"Error in generating safe corridor: {e}")
             return [], []
     
-    @staticmethod
-    def createGridMap(data, pose, goal):
-        size_x = int(2*max(SENSING_RADIUS, abs(goal[0]-pose[0]))/GRID_SIZE)+1
-        size_y = int(2*max(SENSING_RADIUS, abs(goal[1]-pose[1]))/GRID_SIZE)+1
-
-        grid_map = np.zeros((size_x, size_y))
-
-        # Origin of the grid map
-        origin_x = size_x // 2
-        origin_y = size_y // 2
-
-        # Convert polar to cartesian coordinates and update the grid map
-        ang, dist = data
-        # for angle, distance in lidar_data:
-        for i in range(dist.shape[0]):
-            angle = ang[i]; distance = dist[i]
-            if distance > 0:  # avoid invalid measurements
-                x = (distance-ROBOT_RADIUS) * np.cos(angle)
-                y = (distance-ROBOT_RADIUS) * np.sin(angle)
-                grid_x = int(origin_x + x / GRID_SIZE)
-                grid_y = int(origin_y + y / GRID_SIZE)
-                
-                if 0 <= grid_x < size_x and 0 <= grid_y < size_y:
-                    grid_map[grid_x, grid_y] = 1
-
-        # Start and goal indexes
-        start_idx = (origin_x, origin_y)
-        goal_idx = (int(origin_x + (goal[0]-pose[0]) / GRID_SIZE),
-                    int(origin_y + (goal[1]-pose[1]) / GRID_SIZE))
-        return grid_map, start_idx, goal_idx
-
-    @staticmethod
-    def openingMap(grid_map):
-        rows, cols = grid_map.shape
-        mask = np.zeros((rows+2*EXPAND_SIZE, cols+2*EXPAND_SIZE))
-        mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols] = grid_map
-        idxs, idys = np.where(grid_map>0)
-        for i in range(idxs.shape[0]):
-            mask[idxs[i]:idxs[i]+2*EXPAND_SIZE+1,
-                 idys[i]:idys[i]+2*EXPAND_SIZE+1] = np.ones((2*EXPAND_SIZE+1, 2*EXPAND_SIZE+1))
-        grid_map = mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols]
-        return grid_map
     
     

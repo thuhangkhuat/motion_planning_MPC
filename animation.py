@@ -54,6 +54,21 @@ def observerObstacles(pose):
             observed_obstacles.append(OBSTACLES[i,:])
     return np.array(observed_obstacles)
 
+def plot_convex_polygon(ax, A, b, color):
+    if A is None or b is None:
+        return
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    
+    x_grid, y_grid = np.meshgrid(np.linspace(xlim[0], xlim[1], 100),
+                                 np.linspace(ylim[0], ylim[1], 100))
+    points_to_check = np.vstack([x_grid.ravel(), y_grid.ravel()]).T
+
+    inside_mask = np.all(points_to_check @ A.T - b.flatten() <= 1e-5, axis=1)
+
+    ax.scatter(points_to_check[inside_mask, 0], points_to_check[inside_mask, 1],
+               color=color, alpha=0.3, s=7, ec='none')
+
 # path = np.load("path.npy")
 # print(path)
 with open(FILE_NAME, 'rb') as file:
@@ -104,7 +119,8 @@ for iter in range(length):
     for i in range(NUM_ROBOT):
         robot_color = COLORS[i % len(COLORS)]
         path = data[i]["path"]
-        traj_refs = data[i]["traj_refs"]
+        # traj_refs = data[i]["traj_refs"]
+        corridors_data = data[i]["corridors"]
 
         # Plot drone
         robot_current_pos = path[iter, 1:4]
@@ -128,6 +144,13 @@ for iter in range(length):
 
         # Plot path
         plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
+
+        #Plot corridor
+        if iter < len(corridors_data):
+            corridor = corridors_data[iter]
+            A = corridor.get('A')
+            b = corridor.get('b')
+            plot_convex_polygon(ax, A, b, robot_color)
         
 
         # Plot FOV
@@ -138,8 +161,8 @@ for iter in range(length):
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        if METHOD == 1:
-            plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
+        # if METHOD == 1:
+        #     plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
 
     # ax.legend()
     ax.grid(True)
