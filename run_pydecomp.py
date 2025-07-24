@@ -16,7 +16,7 @@ OBSTACLES = np.array([
 # OBSTACLES = np.array([
 #     [5, 5, 1.5]
 # ])
-SENSING_RADIUS = 25.0
+SENSING_RADIUS = 5.0
 
 class LidarScanner:
     # ... (Toàn bộ code của lớp LidarScanner giữ nguyên ở đây) ...
@@ -110,8 +110,8 @@ def main():
     max_coords = all_points.max(axis=0)
     box_size = max_coords - min_coords
     # Thêm một chút padding cho an toàn
-    box = np.array([[box_size[0] + 2, box_size[1] + 2]])
-    # box = np.array([[2, 2]])
+    # box = np.array([[box_size[0] + 2, box_size[1] + 2]])
+    box = np.array([[2, 2]])
     print("Đang thực hiện phân rã lồi bằng hàm API cấp cao...")
     # Gọi hàm API mới. Nó trả về một danh sách các ma trận A và vector b.
     list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_reference, box)

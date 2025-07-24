@@ -206,7 +206,7 @@ class Robot:
         c_col = 0
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
-        total = c_tra + c_u + c_col + c_slack + W_form_dist * c_form['dist'] + W_form_struct * c_form['struct']
+        total = c_tra + c_u + c_col + c_slack + c_form
 
         return total
     
@@ -223,7 +223,9 @@ class Robot:
 
     def costTracking(self, traj):
         cost_tra = 0
-        cost_tra = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
+        dist_goal = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
+
+        cost_tra += (dist_goal - (VIEWING_RADIUS -0.5)**2)**2
         return W_tra*cost_tra
     
     def costCollision(self, traj, scan_data):
@@ -244,19 +246,38 @@ class Robot:
     
     def costFormation(self, traj, neighbors):
         cost_dist = 0 
-        cost_struct = 0
+        cost_spread = 0
         if not neighbors:
-            return {'dist': 0.0, 'struct': 0.0}
+            cost_dist = 0
+            cost_spread = 0
+        current_predicted_pos = self.states_prediction[:, :2]
+        min_dist_sq_avg = float('inf')
+        nearest_neighbor = None
+        other_neighbors = []
+        for other_robot in neighbors:
+            if self.index >= other_robot.index:
+                continue
+            other_predicted_pos = other_robot.states_prediction[:, :2]
+            avg_dist_sq = np.mean(np.sum((current_predicted_pos - other_predicted_pos)**2, axis=1))
+            if avg_dist_sq < min_dist_sq_avg:
+                if nearest_neighbor is not None:
+                    other_neighbors.append(nearest_neighbor)
+                min_dist_sq_avg = avg_dist_sq
+                nearest_neighbor = other_robot
+            else:
+                other_neighbors.append(other_robot)
         for i in range(HORIZON_LENGTH):
-            current_pos = traj[i, :3]
-            for other_robot in neighbors:
-                if self.index >= other_robot.index: 
-                    continue
-                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :3]), 1, 3)
+            current_pos = traj[i, :2]
+            if nearest_neighbor is not None:
+                other_pos = ca.reshape(ca.DM(nearest_neighbor.states_prediction[i, :2]), 1, 2)
                 dist_sq = ca.sumsqr(current_pos - other_pos)
                 cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
-        cost_struct = 0.0
-        return {'dist': cost_dist, 'struct': cost_struct}
+
+            for other_robot in other_neighbors:
+                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]),1,2)
+                dist_sq_other = ca.sumsqr(current_pos - other_pos)
+                cost_spread -= dist_sq_other
+        return W_form_dist*cost_dist + W_form_spread*cost_spread
 
     def predictTrajectory(self, state, controls):
         """

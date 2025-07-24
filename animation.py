@@ -87,7 +87,7 @@ elif SCENARIO == 3:
 elif SCENARIO == 4:
     size = (12,5.5)
 elif SCENARIO == 5:
-    size = (12,5.5)
+    size = (15,7.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -154,7 +154,7 @@ for iter in range(length):
         
 
         # Plot FOV
-        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],3.0,path[iter, 1:][3],path[iter, 1:][4]]
+        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],5,path[iter, 1:][3],path[iter, 1:][4]]
         fov_corners,_,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV,prev_yaw=0.0)
         if fov_corners is not None:
             ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none')
