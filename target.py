@@ -20,6 +20,24 @@ class Target:
                             angle_min=-math.pi, angle_max=math.pi, resolution=math.pi/45)
         self.velocity = np.zeros(3)
         self.max_speed = TAR_MAX_SPEED
+        self.expanded_map = None
+    
+    @staticmethod
+    def expand_obstacles_map(grid_map, expand_size):
+        rows, cols = grid_map.shape
+        mask = np.zeros((rows + 2 * expand_size, cols + 2 * expand_size))
+        mask[expand_size:expand_size + rows, expand_size:expand_size + cols] = grid_map
+        idxs, idys = np.where(grid_map > 0)
+        idxs += expand_size
+        idys += expand_size
+        selem = np.ones((2 * expand_size + 1, 2 * expand_size + 1))
+
+        for i, j in zip(idxs, idys):
+            region = mask[i - expand_size : i + expand_size + 1, j - expand_size : j + expand_size + 1]
+            mask[i - expand_size : i + expand_size + 1, j - expand_size : j + expand_size + 1] = np.logical_or(region, selem)
+
+        expanded_grid_map = mask[expand_size:expand_size + rows, expand_size:expand_size + cols]
+        return expanded_grid_map
 
     def generateTrajectory(self,):
         """
@@ -42,7 +60,7 @@ class Target:
                     dist_to_obs = np.hypot(wx - obs[0], wy - obs[1])
                     if dist_to_obs <= obs[2] + GRID_SIZE:
                         global_grid_map[i, j] = 1
-
+        global_grid_map = Target.expand_obstacles_map(global_grid_map, EXPAND_SIZE_TAR)
         # Initialize the A* planner with the global grid map
         self.planned_path = [self.waypoints[0].copy()]
         for i in range(len(self.waypoints) - 1):

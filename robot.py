@@ -5,6 +5,8 @@ import pydecomp as pdc
 
 from lidar import LidarScanner
 from planner import AStar
+from jps import JumpPointSearch
+# from utils import HeuristicType
 
 from config import *
 
@@ -25,6 +27,7 @@ class Robot:
 
         self.n_state = 6
         self.n_control = 3
+        self.planner = JumpPointSearch()
 
         self.lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/45)
@@ -33,6 +36,7 @@ class Robot:
         self.corridors = []
         # Store robot path
         self.path = []
+        self.traj_refs = []
         # self.path = [np.concatenate([[self.time_stamp], self.state, self.control])]
 
         self.states_prediction = np.ones((HORIZON_LENGTH+1, self.n_state))*self.state
@@ -56,7 +60,7 @@ class Robot:
 
         # Store
         self.path.append(np.concatenate([[self.time_stamp], self.state, self.control]))
-        # self.traj_refs.append(self.traj_ref)
+        self.traj_refs.append(self.traj_ref)
 
         # Shift predictive values
         self.states_prediction[:-1,:] = self.states_prediction[1:,:]
@@ -67,9 +71,10 @@ class Robot:
         Computes control velocity of the copter
         """
         scan_data = self.lidar.senseObstacle(np.concatenate([self.state[:2], [0]]), robots)
+        self.traj_ref = self.getOrientedGoalTrajectory(scan_data, self.goal)
         obstacle_points = self.lidar.getObstaclePoints(np.concatenate([self.state[:2], [0]]), OBSTACLES)
         target_pos = self.goal[:3].reshape(1, 3) 
-        list_A, list_b = self.generateSafeCorridor(self.state, target_pos, obstacle_points)
+        list_A, list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
         neighbor_robots = self.getNeighbors(robots)
         
         opti = ca.Opti()
@@ -180,24 +185,27 @@ class Robot:
 
     def getOrientedGoalTrajectory(self, data, goal):
         position = self.state[:3]
+        print(f"Current position: {position}, Goal: {goal}")
         grid_map, start_idx, goal_idx = self.createGridMap(data, position, goal)
+        print(start_idx, goal_idx)
         grid_map = self.openingMap(grid_map)
-        self.planner.updatePlanner(grid_map, start_idx, goal_idx)
-        rx, ry = self.planner.planning()
-        rx = rx[::-1][1:]; ry = ry[::-1][1:]
+        origin_x = grid_map.shape[0] // 2
+        origin_y = grid_map.shape[1] // 2
+        path_indices = self.planner.plan(grid_map.T, start_idx, goal_idx)
+        traj_ref = []
+            
+        for p_idx in path_indices:
+            p_grid_x, p_grid_y = p_idx
+            delta_world_x = (p_grid_x - origin_x) * GRID_SIZE
 
-        # Trajectory
-        path = []
-
-        for i in range(HORIZON_LENGTH):
-            if i < len(rx):
-                x = rx[i]; y = ry[i]
-                path.append(np.array([(x - grid_map.shape[0]//2) * GRID_SIZE,
-                                      (y - grid_map.shape[1]//2) * GRID_SIZE,
-                                      0.0]) + self.state[:3])
-            else:
-                path.append(goal)
-        return np.array(path)
+            delta_world_y = (p_grid_y - origin_y) * GRID_SIZE
+            p_world_x = position[0] + delta_world_x
+            p_world_y = position[1] + delta_world_y
+            
+            traj_ref.append([p_world_x, p_world_y])
+        # traj_ref.append(goal[:2])  # Append the goal position at the end
+        traj_ref = np.array(traj_ref)
+        return np.array(traj_ref)
 
     def costFunction(self, opt_states, opt_controls, scan_data, slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
@@ -311,26 +319,64 @@ class Robot:
 
 
 
-    def generateSafeCorridor(self,pose, goal, obstacle_points):
+    def generateSafeCorridor(self,path_ref, obstacle_points):
         """
         Create convex polygon using pydecomp
         """
         # print(obstacle_points)
         if obstacle_points.shape[0] < 1: 
             return [], []
-            
-        start = pose[:2]
 
-        path_reference = np.array([start, goal.flatten()[:2]])
         box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
 
-       
         try:
-            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_reference, box)
+            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_ref, box)
             return list_A, list_b
         except Exception as e:
             print(f"Error in generating safe corridor: {e}")
             return [], []
     
-    
+    @staticmethod
+    def createGridMap(data, pose, goal):
+        size_x = int(2*max(SENSING_RADIUS, abs(goal[0]-pose[0]))/GRID_SIZE)+1
+        size_y = int(2*max(SENSING_RADIUS, abs(goal[1]-pose[1]))/GRID_SIZE)+1
+
+        grid_map = np.zeros((size_x, size_y))
+
+        # Origin of the grid map
+        origin_x = size_x // 2
+        origin_y = size_y // 2
+
+        # Convert polar to cartesian coordinates and update the grid map
+        ang, dist = data
+        # for angle, distance in lidar_data:
+        for i in range(dist.shape[0]):
+            angle = ang[i]; distance = dist[i]
+            if distance > 0:  # avoid invalid measurements
+                x = (distance-ROBOT_RADIUS) * np.cos(angle)
+                y = (distance-ROBOT_RADIUS) * np.sin(angle)
+                grid_x = int(origin_x + x / GRID_SIZE)
+                grid_y = int(origin_y + y / GRID_SIZE)
+                
+                if 0 <= grid_x < size_x and 0 <= grid_y < size_y:
+                    grid_map[grid_x, grid_y] = 1
+                
+
+        # Start and goal indexes
+        start_idx = (origin_x, origin_y)
+        goal_idx = (int(origin_x + (goal[0]-pose[0]) / GRID_SIZE),
+                    int(origin_y + (goal[1]-pose[1]) / GRID_SIZE))
+        return grid_map, start_idx, goal_idx
+
+    @staticmethod
+    def openingMap(grid_map):
+        rows, cols = grid_map.shape
+        mask = np.zeros((rows+2*EXPAND_SIZE, cols+2*EXPAND_SIZE))
+        mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols] = grid_map
+        idxs, idys = np.where(grid_map>0)
+        for i in range(idxs.shape[0]):
+            mask[idxs[i]:idxs[i]+2*EXPAND_SIZE+1,
+                 idys[i]:idys[i]+2*EXPAND_SIZE+1] = np.ones((2*EXPAND_SIZE+1, 2*EXPAND_SIZE+1))
+        grid_map = mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols]
+        return grid_map
     

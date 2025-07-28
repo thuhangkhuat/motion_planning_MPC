@@ -148,8 +148,8 @@ def getCircle(x,y,r):
 
 if __name__ == "__main__":
     from robot import Robot
-    pose = np.array([2.5, 0.])
-    goal = np.array([-5., 0.])
+    pose = np.array([3.65500753,4.99997602])
+    goal = np.array([6.33757536,5.23887676])
     robots = [Robot(0, np.concatenate([[-2.5, 0., 5., 0,0,0]]), np.zeros(3)),
               Robot(0, np.concatenate([[11., 6., 5., 0,0,0]]), np.zeros(3))]
 
@@ -162,6 +162,7 @@ if __name__ == "__main__":
     print(time.time()-st)
 
     grid_map, start_idx, goal_idx = createGridMap(data, pose, goal)
+    print(f"Start index: {start_idx}, Goal index: {goal_idx}")
     grid_map = openingMap(grid_map)
     a_star = AStar()
     a_star.updatePlanner(grid_map, start_idx, goal_idx)

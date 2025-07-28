@@ -119,7 +119,7 @@ for iter in range(length):
     for i in range(NUM_ROBOT):
         robot_color = COLORS[i % len(COLORS)]
         path = data[i]["path"]
-        # traj_refs = data[i]["traj_refs"]
+        traj_refs = data[i]["traj_refs"]
         corridors_data = data[i]["corridors"]
 
         # Plot drone
@@ -161,8 +161,11 @@ for iter in range(length):
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        # if METHOD == 1:
-        #     plt.plot(traj_refs[iter,:,0], traj_refs[iter,:,1], "k")
+        if METHOD == 1:
+            if traj_refs is not None and len(traj_refs) > 0:
+                traj_ref = traj_refs[iter]
+                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
+
 
     # ax.legend()
     ax.grid(True)

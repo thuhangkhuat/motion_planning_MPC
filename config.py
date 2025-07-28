@@ -2,7 +2,7 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from formation import generate_circular_formation
-from formation3 import generate_safe_leader_arc_formation
+
 
 TIMESTEP = 0.1
 ROBOT_RADIUS = 0.25
@@ -12,6 +12,7 @@ EPSILON = 0.1
 D_FRAC = 0.0
 GRID_SIZE = 0.1
 EXPAND_SIZE = 3
+EXPAND_SIZE_TAR = 5
 
 VMAX = 1.0
 UMAX = 5.0
@@ -220,9 +221,9 @@ elif SCENARIO == 4:
 elif SCENARIO == 5:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
-                     np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
-    # TAR_WAYPOINTS = [np.array([2.5, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
+    #                  np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([10, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
     VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
@@ -248,7 +249,7 @@ elif SCENARIO == 5:
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)
-    FORMATION_OFFSETS = generate_safe_leader_arc_formation(NUM_ROBOT, VIEWING_RADIUS, DESIRED_SEPARATION)
+    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS, DESIRED_SEPARATION)
     # Obstacle x, y, r
     OBSTACLES = np.array([[ 7.0, 2.5, 0.5],
                           [ 7.0, 5.0, 0.5],
