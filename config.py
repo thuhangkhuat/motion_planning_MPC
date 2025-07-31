@@ -3,6 +3,12 @@ import time
 import matplotlib.pyplot as plt
 from formation import generate_circular_formation
 
+STEP_LENGTH = 0.1
+GOAL_SAMPLE_RATE = 0.01
+SEARCH_RADIUS = 80
+MAX_ITER = 5000
+# XLIM = [0, 25]
+# YLIM = [0, 10]
 
 TIMESTEP = 0.1
 ROBOT_RADIUS = 0.25

@@ -4,9 +4,8 @@ import casadi as ca
 import pydecomp as pdc
 
 from lidar import LidarScanner
-from planner import AStar
 from jps import JumpPointSearch
-# from utils import HeuristicType
+from utils import HeuristicType
 
 from config import *
 

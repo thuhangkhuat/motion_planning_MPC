@@ -76,8 +76,8 @@ class LidarScanner:
         data = data[idx]
         return angle, data
     
-    def getObstaclePoints(self, pose, obstacles):
-        scan_angles, scan_ranges = self.senseObstacle(pose, obstacles)
+    def getObstaclePoints(self, data, pose):
+        scan_angles, scan_ranges = data
         valid_indices = scan_ranges < self.range_max
         
         detected_angles = scan_angles[valid_indices]
