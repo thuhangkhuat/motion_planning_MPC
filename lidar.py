@@ -99,7 +99,7 @@ def createGridMap(data, pose, goal):
     size_x = int(2*max(SENSING_RADIUS, abs(goal[0]-pose[0]))/GRID_SIZE)+1
     size_y = int(2*max(SENSING_RADIUS, abs(goal[1]-pose[1]))/GRID_SIZE)+1
 
-    print(size_x, size_y)
+    # print(size_x, size_y)
     grid_map = np.zeros((size_x, size_y))
 
     # Origin of the grid map

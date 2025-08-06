@@ -44,7 +44,7 @@ class Node:
         self.cost = np.inf
 
 
-def is_collision(start:Node, end:Node, obstacle_points: np.array, robot_radius:float):
+def is_collision(start:Node, end:Node, obstacle_points: np.array, robot_radius:float, ignore_start: bool = False):
     if obstacle_points.shape[0] == 0:
         return False
     
@@ -65,8 +65,11 @@ def is_collision(start:Node, end:Node, obstacle_points: np.array, robot_radius:f
         closest_point_on_line_x = 0
         closest_point_on_line_y = 0
         if t <= 0:
-            closest_point_on_line_x = start.x
-            closest_point_on_line_y = start.y
+            if ignore_start:
+                continue
+            else: 
+                closest_point_on_line_x = start.x
+                closest_point_on_line_y = start.y
         elif t >= segment_length:
             closest_point_on_line_x = end.x
             closest_point_on_line_y = end.y
@@ -75,7 +78,7 @@ def is_collision(start:Node, end:Node, obstacle_points: np.array, robot_radius:f
             closest_point_on_line_y = start.y + t * unit_dy
         distance_to_segment = math.hypot(point[0] - closest_point_on_line_x, 
                                           point[1] - closest_point_on_line_y)
-        if distance_to_segment <= robot_radius:
+        if distance_to_segment <= robot_radius + 0.25:
             return True
     return False
 

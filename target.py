@@ -2,7 +2,7 @@ from config import *
 from lidar import *
 import numpy as np
 import matplotlib.pyplot as plt
-from planner import AStar
+from astar import AStar
 import math
 import numpy as np
 

@@ -4,31 +4,43 @@ import matplotlib.pyplot as plt
 from config import *
 from utils import *
 from lidar import *
+
+
     
 class RRT:
-    def __init__(self, x_start:Node, x_goals:Node,obstacle_points:np.ndarray):
-        self.s_start = Node(x_start)
-        self.s_goal = Node(x_goals)
-        self.obstacle_points = obstacle_points
+    def __init__(self):
+        self.s_start = None
+        self.s_goal = None
+        self.obstacle_points = None
 
-        self.vertex = [self.s_start]
+        self.vertex = None
         self.path = []
 
-    def planning(self):
+    def planning(self,x_start: tuple, x_goal: tuple, obstacle_points: np.ndarray):
+        self.s_start = Node(x_start)
+        self.s_goal = Node(x_goal)
+        self.obstacle_points = obstacle_points
+        self.vertex = [self.s_start]
+        self.path = []
         for _ in range(MAX_ITER):
             node_rand = self.generate_random_node()
             node_near = self.nearest_neighbor(self.vertex, node_rand)
             node_new = self.new_state(node_near, node_rand)
+            if node_new:
+                ignore_flag = False
+            if node_near == self.s_start:
+                ignore_flag = True
 
-            if node_new and not is_collision(node_near, node_new, self.obstacle_points, ROBOT_RADIUS):
+            if node_new and not is_collision(node_near, node_new, self.obstacle_points, ROBOT_RADIUS,ignore_flag):
                 self.vertex.append(node_new)
 
                 dist, _ = self.get_distance_and_angle(node_new, self.s_goal)
-                if dist <= STEP_LENGTH and not is_collision(node_new, self.s_goal,self.obstacle_points, ROBOT_RADIUS):
+                if dist <= STEP_LENGTH and not is_collision(node_new, self.s_goal,self.obstacle_points, ROBOT_RADIUS,ignore_flag):
                     index = self.search_goal_parent()
                     self.path = self.extract_path(self.vertex[index])
-                    return True, self.path
-        return False, []
+                    return True, self.path, self.vertex
+       
+        return False, [], self.vertex
 
     def new_state(self, node_start, node_goal):
         dist, theta = self.get_distance_and_angle(node_start, node_goal)
@@ -76,7 +88,6 @@ class RRT:
         dis_node = [math.hypot(nd.x - n.x, nd.y - n.y) for nd in node_list]
 
         return node_list[int(np.argmin(dis_node))]
-
     @staticmethod
     def cost(node_p:Node):
         node = node_p
@@ -103,7 +114,9 @@ class RRT:
         count = 500
         while not np.array_equal(new_path[-1], goal) and count > 0:
             for i in range(len(path)):
-                if not is_collision(Node(new_path[-1]), Node(path[i]), obstacle_points, ROBOT_RADIUS):
+                if i == 0:
+                    ignore_flag = True
+                if not is_collision(Node(new_path[-1]), Node(path[i]), obstacle_points, ROBOT_RADIUS,ignore_flag):
                     new_path.append(path[i])
                     break
             count -= 1
@@ -116,20 +129,19 @@ class RRT:
         return math.hypot(dx, dy), math.atan2(dy, dx)
 if __name__ == "__main__":
     from robot import Robot
-    pose = np.array([6.2,5.0])
-    goal = np.array([12,5.5])
+    pose = np.array([5.95566896,5.26460356])
+    goal = np.array([13.77033901,5.57058544])
     robots = [Robot(0, np.concatenate([[-2.5, 0., 5., 0,0,0]]), np.zeros(3)),
               Robot(0, np.concatenate([[11., 6., 5., 0,0,0]]), np.zeros(3))]
 
-    lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
+    lidar = LidarScanner(range_min=0.2, range_max=SENSING_RADIUS,
                         angle_min=-math.pi, angle_max=math.pi, resolution=math.pi/90)
     import time
     st = time.time()
     data = lidar.senseObstacle(np.concatenate([pose, [0]]), robots)
-    print(data)
     obstacle_points = lidar.getObstaclePoints(data, pose)
-    rrt  = RRT(pose, goal, obstacle_points)
-    success, raw_path = rrt.planning()
+    rrt  = RRT()
+    success, raw_path,_ = rrt.planning(pose, goal, obstacle_points)
     count, smoothed_path = RRT.remove_residual_node(raw_path, pose, goal, obstacle_points, ROBOT_RADIUS)
     print(time.time()-st)
     if success:

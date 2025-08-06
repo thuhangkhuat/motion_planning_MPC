@@ -4,8 +4,8 @@ import casadi as ca
 import pydecomp as pdc
 
 from lidar import LidarScanner
-from jps import JumpPointSearch
-from utils import HeuristicType
+from utils import *
+from planner import RRT
 
 from config import *
 
@@ -26,16 +26,20 @@ class Robot:
 
         self.n_state = 6
         self.n_control = 3
-        self.planner = JumpPointSearch()
-
-        self.lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
-                                  angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/45)
+        
+        self.lidar = LidarScanner(range_min=0.1, range_max=SENSING_RADIUS,
+                                  angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/90)
+        # Planner
+        self.planner = RRT()
         
         #Store the corridor
         self.corridors = []
         # Store robot path
         self.path = []
         self.traj_refs = []
+        self.path_update_counter = 0
+        self.cached_path = None
+
         # self.path = [np.concatenate([[self.time_stamp], self.state, self.control])]
 
         self.states_prediction = np.ones((HORIZON_LENGTH+1, self.n_state))*self.state
@@ -70,8 +74,8 @@ class Robot:
         Computes control velocity of the copter
         """
         scan_data = self.lidar.senseObstacle(np.concatenate([self.state[:2], [0]]), robots)
-        self.traj_ref = self.getOrientedGoalTrajectory(scan_data, self.goal)
-        obstacle_points = self.lidar.getObstaclePoints(np.concatenate([self.state[:2], [0]]), OBSTACLES)
+        obstacle_points = self.lidar.getObstaclePoints(scan_data, np.concatenate([self.state[:2], [0]]))
+        self.traj_ref = self.getOrientedGoalTrajectory(obstacle_points, self.goal)
         target_pos = self.goal[:3].reshape(1, 3) 
         list_A, list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
         neighbor_robots = self.getNeighbors(robots)
@@ -156,7 +160,7 @@ class Robot:
             con = opt_controls[i, :]
             opti.subject_to(ca.sumsqr(con) <= UMAX**2)
         
-        opts_setting = {'ipopt.max_iter': 2000,   #1e5
+        opts_setting = {'ipopt.max_iter': 5000,   #1e5
                         'ipopt.print_level': 0,
                         'ipopt.tol': 1e-4,  #1e-6
                         'ipopt.acceptable_tol': 1e-2,  #1e-6
@@ -164,7 +168,7 @@ class Robot:
         opti.solver('ipopt', opts_setting)
 
         # cost function
-        obj = self.costFunction(opt_states, opt_controls, scan_data,slack_cbf, neighbor_robots)
+        obj = self.costFunction(opt_states, opt_controls, scan_data,self.traj_ref,slack_cbf, neighbor_robots)
         opti.minimize(obj)
 
         # provide the initial guess of the optimization targets
@@ -182,39 +186,33 @@ class Robot:
         control = self.controls_prediction[0,:]
         self.updateState(control, TIMESTEP)
 
-    def getOrientedGoalTrajectory(self, data, goal):
+    def getOrientedGoalTrajectory(self, obstacle_points, goal):
+        self.path_update_counter += 1
+        if self.cached_path is not None and self.path_update_counter < PATH_UPDATE_INTERVAL:
+            current_pos = self.state[:2]
+            distances = np.linalg.norm(self.cached_path - current_pos, axis=1)
+            closest_idx = np.argmin(distances)
+            return self.cached_path[closest_idx:]
+        self.path_update_counter = 0 
+    
         position = self.state[:3]
-        print(f"Current position: {position}, Goal: {goal}")
-        grid_map, start_idx, goal_idx = self.createGridMap(data, position, goal)
-        print(start_idx, goal_idx)
-        grid_map = self.openingMap(grid_map)
-        origin_x = grid_map.shape[0] // 2
-        origin_y = grid_map.shape[1] // 2
-        path_indices = self.planner.plan(grid_map.T, start_idx, goal_idx)
-        traj_ref = []
-            
-        for p_idx in path_indices:
-            p_grid_x, p_grid_y = p_idx
-            delta_world_x = (p_grid_x - origin_x) * GRID_SIZE
+        _,raw_path,_ = self.planner.planning(position[:2], goal[:2], obstacle_points)
+        if not raw_path:
+            print("No path found")
+        _,traj_ref = RRT.remove_residual_node(raw_path, position[:2], goal[:2], obstacle_points, ROBOT_RADIUS)
+        self.cached_path = np.array(traj_ref)
+        return self.cached_path
+        # return np.array(traj_ref)
 
-            delta_world_y = (p_grid_y - origin_y) * GRID_SIZE
-            p_world_x = position[0] + delta_world_x
-            p_world_y = position[1] + delta_world_y
-            
-            traj_ref.append([p_world_x, p_world_y])
-        # traj_ref.append(goal[:2])  # Append the goal position at the end
-        traj_ref = np.array(traj_ref)
-        return np.array(traj_ref)
-
-    def costFunction(self, opt_states, opt_controls, scan_data, slack_vars, neighbors):
+    def costFunction(self, opt_states, opt_controls, scan_data, traj_ref,slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
-        c_tra = self.costTracking(opt_states)
+        c_tra = self.costTracking(opt_states, traj_ref)
         # c_col = self.costCollision(opt_states, scan_data)
         c_col = 0
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
         total = c_tra + c_u + c_col + c_slack + c_form
-
+                    
         return total
     
     def costSlack(self, slack_vars):
@@ -228,12 +226,19 @@ class Robot:
             cost_u += ca.sumsqr(control)
         return W_u*cost_u
 
-    def costTracking(self, traj):
+    def costTracking(self, traj, traj_ref):
         cost_tra = 0
-        dist_goal = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
-
-        cost_tra += (dist_goal - (VIEWING_RADIUS -0.5)**2)**2
-        return W_tra*cost_tra
+        cost_gui = 0
+        mid_horizon_idx = HORIZON_LENGTH // 2
+        if traj_ref is not None and len(traj_ref) > 2:
+            dist_guide = ca.sumsqr(traj[-1, :2] - traj_ref[1, :2].reshape(1, 2))
+            dist_goal = 0
+        else:
+            dist_guide = 0
+            dist_goal = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
+            cost_tra += (dist_goal - (VIEWING_RADIUS -0.5)**2)**2
+        cost_gui +=  dist_guide**2
+        return W_tra*cost_tra + W_gui*cost_gui
     
     def costCollision(self, traj, scan_data):
         cost_col = 0
@@ -243,9 +248,6 @@ class Robot:
             obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
             obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
             for i in range(HORIZON_LENGTH):
-                # obs_rel = traj[i,:2].T - np.array([obs_x, obs_y])
-                # cost_col += 1./(1+ca.exp(4*(ca.mtimes(obs_rel.T, obs_rel) - ROBOT_RADIUS)))
-                # cost_col -= ca.log(ca.sumsqr(obs_rel) - ROBOT_RADIUS**2)
                 dist_sq = ca.sumsqr(traj[i,:2] - ca.DM([obs_x, obs_y]).T)
                 margin = dist_sq - ROBOT_RADIUS**2
                 cost_col += 1 / (margin + 1e-4)
@@ -311,7 +313,6 @@ class Robot:
                 continue
             other_current_pos = other_robot.state[:3]
             distance = np.linalg.norm(current_pos - other_current_pos)
-            # print(f"Distance to robot {other_robot.index}: {distance}")
             if distance < SENSING_NEIGHBOR:
                 neighbors.append(other_robot)
         return neighbors
@@ -322,7 +323,6 @@ class Robot:
         """
         Create convex polygon using pydecomp
         """
-        # print(obstacle_points)
         if obstacle_points.shape[0] < 1: 
             return [], []
 
@@ -335,47 +335,6 @@ class Robot:
             print(f"Error in generating safe corridor: {e}")
             return [], []
     
-    @staticmethod
-    def createGridMap(data, pose, goal):
-        size_x = int(2*max(SENSING_RADIUS, abs(goal[0]-pose[0]))/GRID_SIZE)+1
-        size_y = int(2*max(SENSING_RADIUS, abs(goal[1]-pose[1]))/GRID_SIZE)+1
 
-        grid_map = np.zeros((size_x, size_y))
-
-        # Origin of the grid map
-        origin_x = size_x // 2
-        origin_y = size_y // 2
-
-        # Convert polar to cartesian coordinates and update the grid map
-        ang, dist = data
-        # for angle, distance in lidar_data:
-        for i in range(dist.shape[0]):
-            angle = ang[i]; distance = dist[i]
-            if distance > 0:  # avoid invalid measurements
-                x = (distance-ROBOT_RADIUS) * np.cos(angle)
-                y = (distance-ROBOT_RADIUS) * np.sin(angle)
-                grid_x = int(origin_x + x / GRID_SIZE)
-                grid_y = int(origin_y + y / GRID_SIZE)
-                
-                if 0 <= grid_x < size_x and 0 <= grid_y < size_y:
-                    grid_map[grid_x, grid_y] = 1
-                
-
-        # Start and goal indexes
-        start_idx = (origin_x, origin_y)
-        goal_idx = (int(origin_x + (goal[0]-pose[0]) / GRID_SIZE),
-                    int(origin_y + (goal[1]-pose[1]) / GRID_SIZE))
-        return grid_map, start_idx, goal_idx
-
-    @staticmethod
-    def openingMap(grid_map):
-        rows, cols = grid_map.shape
-        mask = np.zeros((rows+2*EXPAND_SIZE, cols+2*EXPAND_SIZE))
-        mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols] = grid_map
-        idxs, idys = np.where(grid_map>0)
-        for i in range(idxs.shape[0]):
-            mask[idxs[i]:idxs[i]+2*EXPAND_SIZE+1,
-                 idys[i]:idys[i]+2*EXPAND_SIZE+1] = np.ones((2*EXPAND_SIZE+1, 2*EXPAND_SIZE+1))
-        grid_map = mask[EXPAND_SIZE:EXPAND_SIZE+rows, EXPAND_SIZE:EXPAND_SIZE+cols]
-        return grid_map
+   
     

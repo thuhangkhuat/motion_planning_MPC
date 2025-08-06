@@ -3,7 +3,7 @@ import time
 import matplotlib.pyplot as plt
 from formation import generate_circular_formation
 
-STEP_LENGTH = 0.1
+STEP_LENGTH = 0.5
 GOAL_SAMPLE_RATE = 0.01
 SEARCH_RADIUS = 80
 MAX_ITER = 5000
@@ -11,19 +11,20 @@ MAX_ITER = 5000
 # YLIM = [0, 10]
 
 TIMESTEP = 0.1
-ROBOT_RADIUS = 0.25
+ROBOT_RADIUS = 0.15
 SENSING_RADIUS = 3.0
-SENSING_NEIGHBOR = 5.0 
+SENSING_NEIGHBOR = 3.0 
 EPSILON = 0.1
 D_FRAC = 0.0
 GRID_SIZE = 0.1
 EXPAND_SIZE = 3
-EXPAND_SIZE_TAR = 5
+EXPAND_SIZE_TAR = 3
 
 VMAX = 1.0
 UMAX = 5.0
 
 HORIZON_LENGTH = 10
+PATH_UPDATE_INTERVAL = 3
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
@@ -229,7 +230,9 @@ elif SCENARIO == 5:
     TAR_MAX_SPEED = 0.8
     # TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
     #                  np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
-    TAR_WAYPOINTS = [np.array([10, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([10, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([6.76428878,6.31261269, 5.0]),np.array([21, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
     VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
@@ -240,18 +243,19 @@ elif SCENARIO == 5:
     VFOV = 60.0             # Vertical field of view
     # Weights for MPC
     W_tra = 1
+    W_gui = 1
     W_u = 4e-1
     W_col = 2.0
     W_slack = 4.0
-    W_form_dist = 10.0
-    W_form_spread = 20.0
+    W_form_dist = 5.0
+    W_form_spread = 3.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1, 5, 3.],])
-                    #    [4, 1, 3.],
-                    #    [2, 11, 3.],])
-    # STARTS = np.array([[2., 3., 5.]])
+    STARTS = np.array([[3.6, 7.3, 3.],
+                       [4, 11, 3.],
+                       [14.5, 8.5, 3.],])
+    # STARTS = np.array([[3.5, 5.0, 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)
@@ -268,7 +272,6 @@ elif SCENARIO == 5:
                           [17.0, 9.0, 0.5],
                           [19.0, 3.5, 0.5],
                           [19.0, 6.5, 0.5]])
-    # OBSTACLES = np.array([])
     # OBSTACLES = np.array([])
     XLIM = [0, 22]
     YLIM = [0, 12]
