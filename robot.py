@@ -31,12 +31,14 @@ class Robot:
                                   angle_min=-np.pi, angle_max=np.pi, resolution=np.pi/90)
         # Planner
         self.planner = RRT()
+        self.is_planner_initialized = False
         
         #Store the corridor
         self.corridors = []
         # Store robot path
         self.path = []
         self.traj_refs = []
+        self.full_path = None
         self.path_update_counter = 0
         self.cached_path = None
 
@@ -187,22 +189,26 @@ class Robot:
         self.updateState(control, TIMESTEP)
 
     def getOrientedGoalTrajectory(self, obstacle_points, goal):
-        self.path_update_counter += 1
-        if self.cached_path is not None and self.path_update_counter < PATH_UPDATE_INTERVAL:
-            current_pos = self.state[:2]
-            distances = np.linalg.norm(self.cached_path - current_pos, axis=1)
-            closest_idx = np.argmin(distances)
-            return self.cached_path[closest_idx:]
-        self.path_update_counter = 0 
-    
-        position = self.state[:3]
-        _,raw_path,_ = self.planner.planning(position[:2], goal[:2], obstacle_points)
-        if not raw_path:
-            print("No path found")
-        _,traj_ref = RRT.remove_residual_node(raw_path, position[:2], goal[:2], obstacle_points, ROBOT_RADIUS)
-        self.cached_path = np.array(traj_ref)
-        return self.cached_path
-        # return np.array(traj_ref)
+        current_robot_pos = self.state[:2]
+        current_goal_pos = goal[:2]
+        should_replan_fully = (not self.is_planner_initialized or len(self.planner.vertex) < 10)
+        if not should_replan_fully:
+            # print(f"Robot {self.index}: Updating RRT tree...")
+            success = self.planner.update_root(current_robot_pos, obstacle_points, ROBOT_RADIUS)
+            if not success:
+                # print(f"Robot {self.index}: Root update failed. Forcing full replan.")
+                should_replan_fully = True
+        if should_replan_fully:
+            # print(f"Robot {self.index}: Performing FULL REPLAN.")
+            self.planner.initialize(current_robot_pos)
+            self.is_planner_initialized = True
+        
+        self.planner.set_goal(current_goal_pos)
+        self.planner.extend_tree(obstacle_points, ROBOT_RADIUS, iterations=150)
+        _, raw_path, _ = self.planner.find_path(obstacle_points, ROBOT_RADIUS)
+
+        _,traj_ref = RRT.remove_residual_node(raw_path, current_robot_pos, current_goal_pos, obstacle_points, ROBOT_RADIUS)
+        return np.array(traj_ref)
 
     def costFunction(self, opt_states, opt_controls, scan_data, traj_ref,slack_vars, neighbors):
         c_u = self.costControl(opt_controls)

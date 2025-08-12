@@ -24,7 +24,7 @@ VMAX = 1.0
 UMAX = 5.0
 
 HORIZON_LENGTH = 10
-PATH_UPDATE_INTERVAL = 3
+PATH_UPDATE_INTERVAL = 1
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
@@ -252,10 +252,10 @@ elif SCENARIO == 5:
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[3.6, 7.3, 3.],
-                       [4, 11, 3.],
-                       [14.5, 8.5, 3.],])
-    # STARTS = np.array([[3.5, 5.0, 5.]])
+    # STARTS = np.array([[3.6, 7.3, 3.],
+    #                    [4, 11, 3.],
+    #                    [14.5, 8.5, 3.],])
+    STARTS = np.array([[5, 8.0, 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)

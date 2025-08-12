@@ -16,31 +16,70 @@ class RRT:
         self.vertex = None
         self.path = []
 
-    def planning(self,x_start: tuple, x_goal: tuple, obstacle_points: np.ndarray):
+    def initialize(self, x_start: tuple):
         self.s_start = Node(x_start)
-        self.s_goal = Node(x_goal)
-        self.obstacle_points = obstacle_points
         self.vertex = [self.s_start]
-        self.path = []
-        for _ in range(MAX_ITER):
+
+    def set_goal(self, x_goal: tuple):
+        self.s_goal = Node(x_goal)
+
+    def update_root(self, new_start_pos: tuple, obstacle_points: np.ndarray, robot_radius: float):
+        if not self.vertex:
+            self.initialize(new_start_pos)
+            return True
+
+        new_root_candidate = self.nearest_neighbor(self.vertex, Node(new_start_pos))
+
+        if is_collision(Node(new_start_pos), new_root_candidate, obstacle_points, robot_radius, ignore_start=False):
+        
+            return False
+
+        new_root_candidate.parent = None
+        
+        new_vertex_list = []
+        nodes_to_visit = [new_root_candidate]
+        visited_nodes = {new_root_candidate}
+
+        while nodes_to_visit:
+            current_node = nodes_to_visit.pop(0)
+            new_vertex_list.append(current_node)
+            children = [v for v in self.vertex if v.parent == current_node]
+            for child in children:
+                if child not in visited_nodes:
+                    nodes_to_visit.append(child)
+                    visited_nodes.add(child)
+        
+        self.vertex = new_vertex_list
+        self.s_start = new_root_candidate
+            
+        return True
+
+    def extend_tree(self, obstacle_points: np.ndarray, robot_radius: float, iterations=100):
+        if not self.vertex:
+            return
+
+        for _ in range(iterations):
             node_rand = self.generate_random_node()
             node_near = self.nearest_neighbor(self.vertex, node_rand)
             node_new = self.new_state(node_near, node_rand)
-            if node_new:
-                ignore_flag = False
-            if node_near == self.s_start:
-                ignore_flag = True
 
-            if node_new and not is_collision(node_near, node_new, self.obstacle_points, ROBOT_RADIUS,ignore_flag):
+            should_ignore_start = (node_near == self.s_start)
+            if node_new and not is_collision(node_near, node_new, obstacle_points, robot_radius, ignore_start=should_ignore_start):
                 self.vertex.append(node_new)
 
-                dist, _ = self.get_distance_and_angle(node_new, self.s_goal)
-                if dist <= STEP_LENGTH and not is_collision(node_new, self.s_goal,self.obstacle_points, ROBOT_RADIUS,ignore_flag):
-                    index = self.search_goal_parent()
-                    self.path = self.extract_path(self.vertex[index])
-                    return True, self.path, self.vertex
-       
-        return False, [], self.vertex
+    def find_path(self, obstacle_points: np.ndarray, robot_radius: float):
+        if not self.vertex or self.s_goal is None:
+            return False, np.array([]), self.vertex
+
+        node_near_goal = self.nearest_neighbor(self.vertex, self.s_goal)
+        
+        # Khi kết nối đến goal, không bao giờ bỏ qua va chạm
+        if not is_collision(node_near_goal, self.s_goal, obstacle_points, robot_radius, ignore_start=False):
+            self.s_goal.parent = node_near_goal
+            path = self.extract_path(self.s_goal)
+            return True, path, self.vertex
+        
+        return False, np.array([]), self.vertex
 
     def new_state(self, node_start, node_goal):
         dist, theta = self.get_distance_and_angle(node_start, node_goal)
