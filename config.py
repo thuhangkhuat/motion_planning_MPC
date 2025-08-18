@@ -230,8 +230,8 @@ elif SCENARIO == 5:
     TAR_MAX_SPEED = 0.8
     # TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
     #                  np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
-    TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
-    # TAR_WAYPOINTS = [np.array([10, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([6.76428878,6.31261269, 5.0]),np.array([21, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
@@ -242,37 +242,36 @@ elif SCENARIO == 5:
     HFOV = 60.0             # Horizontal field of view
     VFOV = 60.0             # Vertical field of view
     # Weights for MPC
-    W_tra = 1
+    W_tra = 10
     W_gui = 1
     W_u = 4e-1
-    W_col = 2.0
-    W_slack = 4.0
-    W_form_dist = 5.0
-    W_form_spread = 3.0
+    W_slack = 100.0
+    W_form_dist = 50.0
+    W_form_spread = 5.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    # STARTS = np.array([[3.6, 7.3, 3.],
-    #                    [4, 11, 3.],
-    #                    [14.5, 8.5, 3.],])
-    STARTS = np.array([[5, 8.0, 5.]])
+    STARTS = np.array([[2.0, 5.3, 3.],
+                       [4, 11, 3.],
+                       [14.5, 8.5, 3.],])
+    # STARTS = np.array([[5, 8.0, 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     # FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.5, arc_angle_deg=120)
     FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS, DESIRED_SEPARATION)
     # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.5],
-                          [ 7.0, 5.0, 0.5],
-                          [ 7.0, 9.0, 0.5],
-                          [ 9.0, 1.5, 0.5],
-                          [12.0, 4.0, 0.5],
-                          [12.0, 9.5, 0.5],
-                          [15.0, 1.5, 0.5],
-                          [15.0, 4.5, 0.5],
-                          [17.0, 9.0, 0.5],
-                          [19.0, 3.5, 0.5],
-                          [19.0, 6.5, 0.5]])
-    # OBSTACLES = np.array([])
+    # OBSTACLES = np.array([[ 7.0, 2.5, 0.5],
+    #                       [ 7.0, 5.0, 0.5],
+    #                       [ 7.0, 9.0, 0.5],
+    #                       [ 9.0, 1.5, 0.5],
+    #                       [12.0, 4.0, 0.5],
+    #                       [12.0, 9.5, 0.5],
+    #                       [15.0, 1.5, 0.5],
+    #                       [15.0, 4.5, 0.5],
+    #                       [17.0, 9.0, 0.5],
+    #                       [19.0, 3.5, 0.5],
+    #                       [19.0, 6.5, 0.5]])
+    OBSTACLES = np.array([])
     XLIM = [0, 22]
     YLIM = [0, 12]
 

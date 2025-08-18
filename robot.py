@@ -170,7 +170,7 @@ class Robot:
         opti.solver('ipopt', opts_setting)
 
         # cost function
-        obj = self.costFunction(opt_states, opt_controls, scan_data,self.traj_ref,slack_cbf, neighbor_robots)
+        obj = self.costFunction(opt_states, opt_controls,self.traj_ref,slack_cbf, neighbor_robots)
         opti.minimize(obj)
 
         # provide the initial guess of the optimization targets
@@ -210,19 +210,19 @@ class Robot:
         _,traj_ref = RRT.remove_residual_node(raw_path, current_robot_pos, current_goal_pos, obstacle_points, ROBOT_RADIUS)
         return np.array(traj_ref)
 
-    def costFunction(self, opt_states, opt_controls, scan_data, traj_ref,slack_vars, neighbors):
+    def costFunction(self, opt_states, opt_controls, traj_ref,slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
         c_tra = self.costTracking(opt_states, traj_ref)
-        # c_col = self.costCollision(opt_states, scan_data)
-        c_col = 0
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
-        total = c_tra + c_u + c_col + c_slack + c_form
+        total = c_tra + c_u  + c_slack + c_form
                     
         return total
     
     def costSlack(self, slack_vars):
-        return W_slack * ca.sumsqr(slack_vars)
+        positive_slack = ca.fmax(slack_vars, 0)
+        return W_slack * ca.sum1(positive_slack**3)
+        # return W_slack * ca.sum1(slack_vars**3)
 
     def costControl(self, u):
         cost_u = 0
@@ -242,7 +242,7 @@ class Robot:
         else:
             dist_guide = 0
             dist_goal = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
-            cost_tra += (dist_goal - (VIEWING_RADIUS -0.5)**2)**2
+            cost_tra += (dist_goal - (VIEWING_RADIUS -1)**2)**2
         cost_gui +=  dist_guide**2
         return W_tra*cost_tra + W_gui*cost_gui
     
