@@ -228,15 +228,15 @@ elif SCENARIO == 4:
 elif SCENARIO == 5:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    # TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
-    #                  np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
+                     np.array([15.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
-    TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([6.76428878,6.31261269, 5.0]),np.array([21, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
     VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
+    DESIRED_SEPARATION = VIEWING_RADIUS  # desired distance between robots
     
     # Parameters of FOV
     HFOV = 60.0             # Horizontal field of view
@@ -245,15 +245,17 @@ elif SCENARIO == 5:
     W_tra = 10
     W_gui = 1
     W_u = 4e-1
-    W_slack = 100.0
-    W_form_dist = 50.0
+    W_slack = 1000.0
+    W_form_dist = 5.0
     W_form_spread = 5.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
     STARTS = np.array([[2.0, 5.3, 3.],
                        [4, 11, 3.],
-                       [14.5, 8.5, 3.],])
+                       [14.5, 8.5, 3.],
+                        [1, 4.5, 3.],
+                       [3, 6.0, 3.]])
     # STARTS = np.array([[5, 8.0, 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]

@@ -259,40 +259,76 @@ class Robot:
                 cost_col += 1 / (margin + 1e-4)
         return W_col*cost_col
     
-    def costFormation(self, traj, neighbors):
-        cost_dist = 0 
-        cost_spread = 0
-        if not neighbors:
-            cost_dist = 0
-            cost_spread = 0
-        current_predicted_pos = self.states_prediction[:, :2]
-        min_dist_sq_avg = float('inf')
-        nearest_neighbor = None
-        other_neighbors = []
-        for other_robot in neighbors:
-            if self.index >= other_robot.index:
-                continue
-            other_predicted_pos = other_robot.states_prediction[:, :2]
-            avg_dist_sq = np.mean(np.sum((current_predicted_pos - other_predicted_pos)**2, axis=1))
-            if avg_dist_sq < min_dist_sq_avg:
-                if nearest_neighbor is not None:
-                    other_neighbors.append(nearest_neighbor)
-                min_dist_sq_avg = avg_dist_sq
-                nearest_neighbor = other_robot
-            else:
-                other_neighbors.append(other_robot)
-        for i in range(HORIZON_LENGTH):
-            current_pos = traj[i, :2]
-            if nearest_neighbor is not None:
-                other_pos = ca.reshape(ca.DM(nearest_neighbor.states_prediction[i, :2]), 1, 2)
-                dist_sq = ca.sumsqr(current_pos - other_pos)
-                cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
+    # def costFormation(self, traj, neighbors):
+    #     cost_dist = 0 
+    #     cost_spread = 0
+    #     if not neighbors:
+    #         cost_dist = 0
+    #         cost_spread = 0
+    #     current_predicted_pos = self.states_prediction[:, :2]
+    #     min_dist_sq_avg = float('inf')
+    #     nearest_neighbor = None
+    #     other_neighbors = []
+    #     for other_robot in neighbors:
+    #         if self.index >= other_robot.index:
+    #             continue
+    #         other_predicted_pos = other_robot.states_prediction[:, :2]
+    #         avg_dist_sq = np.mean(np.sum((current_predicted_pos - other_predicted_pos)**2, axis=1))
+    #         if avg_dist_sq < min_dist_sq_avg:
+    #             if nearest_neighbor is not None:
+    #                 other_neighbors.append(nearest_neighbor)
+    #             min_dist_sq_avg = avg_dist_sq
+    #             nearest_neighbor = other_robot
+    #         else:
+    #             other_neighbors.append(other_robot)
+    #     for i in range(HORIZON_LENGTH):
+    #         current_pos = traj[i, :2]
+    #         if nearest_neighbor is not None:
+    #             other_pos = ca.reshape(ca.DM(nearest_neighbor.states_prediction[i, :2]), 1, 2)
+    #             dist_sq = ca.sumsqr(current_pos - other_pos)
+    #             cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
 
-            for other_robot in other_neighbors:
-                other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]),1,2)
-                dist_sq_other = ca.sumsqr(current_pos - other_pos)
-                cost_spread -= dist_sq_other
-        return W_form_dist*cost_dist + W_form_spread*cost_spread
+    #         for other_robot in other_neighbors:
+    #             other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]),1,2)
+    #             dist_sq_other = ca.sumsqr(current_pos - other_pos)
+    #             cost_spread -= dist_sq_other
+    #     return W_form_dist*cost_dist + W_form_spread*cost_spread
+
+    def costFormation(self, traj, neighbors):
+        if not neighbors:
+            return 0
+        current_pos_start = self.state[:2]
+        scores = []
+        neighbor_predictions = []
+        beta = 0.5
+        for other_robot in neighbors:
+            other_pos_start = other_robot.state[:2]
+            dist_sq_start = np.sum((current_pos_start - other_pos_start)**2)
+            scores.append(-beta * dist_sq_start)
+            neighbor_predictions.append(other_robot.states_prediction)
+        
+        scores_ca = ca.DM(scores)
+        exp_scores = ca.exp(scores_ca)
+        sum_exp_scores = ca.sum1(exp_scores)
+        alpha_weights = exp_scores / sum_exp_scores
+
+        total_formation_cost = 0
+        for i in range(HORIZON_LENGTH):
+            current_pos_k = traj[i, :2]
+        
+        for j, other_prediction in enumerate(neighbor_predictions):
+            other_pos_k = ca.reshape(ca.DM(other_prediction[i, :2]), 1, 2)
+            alpha_j = alpha_weights[j]
+            dist_sq = ca.sumsqr(current_pos_k - other_pos_k)
+            
+            cost_dist_j = W_form_dist * (dist_sq - DESIRED_SEPARATION**2)**2
+            cost_spread_j = -W_form_spread * dist_sq
+    
+            combined_cost_j = alpha_j * cost_dist_j + (1 - alpha_j) * cost_spread_j
+            
+            total_formation_cost += combined_cost_j
+        
+        return total_formation_cost
 
     def predictTrajectory(self, state, controls):
         """
