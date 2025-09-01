@@ -3,7 +3,7 @@ import casadi as ca
 
 import pydecomp as pdc
 
-from lidar import LidarScanner
+from lidar2 import LidarScanner
 from utils import *
 from planner import RRT
 

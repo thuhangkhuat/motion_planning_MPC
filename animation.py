@@ -87,7 +87,7 @@ elif SCENARIO == 3:
 elif SCENARIO == 4:
     size = (12,5.5)
 elif SCENARIO == 5:
-    size = (12,5.5)
+    size = (15,7.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -107,8 +107,12 @@ for iter in range(length):
         ax.plot(a, b, **kwargs)
     ax.plot([], [], label="Obstacles", **kwargs)
 
+    for poly in POLYGON_OBSTACLES:
+        ax.fill(poly[:, 0], poly[:, 1], color='gray', alpha=0.5, label="Polygon Obstacles" if poly is POLYGON_OBSTACLES[0] else "")
+        ax.plot(np.append(poly[:, 0], poly[0,0]), np.append(poly[:, 1], poly[0,1]), 'k-', linewidth=1.5)
+
     # Plot target trajectory
-    ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
+    # ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
     ax.plot(target_trajectory[iter, 0], target_trajectory[iter, 1], 'rX', markersize=10, label="Target")
 
     target_current_pos = target_trajectory[iter]

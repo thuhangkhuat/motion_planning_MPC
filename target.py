@@ -1,5 +1,5 @@
 from config import *
-from lidar import *
+from lidar2 import *
 import numpy as np
 import matplotlib.pyplot as plt
 from astar import AStar
@@ -60,6 +60,18 @@ class Target:
                     dist_to_obs = np.hypot(wx - obs[0], wy - obs[1])
                     if dist_to_obs <= obs[2] + GRID_SIZE:
                         global_grid_map[i, j] = 1
+        for poly in POLYGON_OBSTACLES:
+            min_x, max_x = np.min(poly[:, 0]), np.max(poly[:, 0])
+            min_y, max_y = np.min(poly[:, 1]), np.max(poly[:, 1])
+            for i in range(map_width):
+                for j in range(map_height):
+                    wx = XLIM[0] + i * GRID_SIZE
+                    wy = YLIM[0] + j * GRID_SIZE
+                    if min_x <= wx <= max_x and min_y <= wy <= max_y:
+                        from matplotlib.path import Path
+                        path = Path(poly)
+                        if path.contains_point((wx, wy)):
+                            global_grid_map[i, j] = 1
         global_grid_map = Target.expand_obstacles_map(global_grid_map, EXPAND_SIZE_TAR)
         # Initialize the A* planner with the global grid map
         self.planned_path = [self.waypoints[0].copy()]
