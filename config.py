@@ -12,7 +12,7 @@ MAX_ITER = 5000
 
 TIMESTEP = 0.1
 ROBOT_RADIUS = 0.15
-SENSING_RADIUS = 3.0
+SENSING_RADIUS = 5.0
 SENSING_NEIGHBOR = 3.0 
 EPSILON = 0.1
 D_FRAC = 0.0
@@ -179,9 +179,9 @@ elif SCENARIO == 3:
 elif SCENARIO == 4:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([4, 6.5, 5.0]),np.array([10.0, 6.5, 5.0]),
-                     np.array([15.0, 5.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([25.0, 5.0, 5.0])]
-    # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([22.0, 5.0, 5.0])]
+    # TAR_WAYPOINTS = [np.array([4, 6.5, 5.0]),np.array([10.0, 6.5, 5.0]),
+    #                  np.array([15.0, 5.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([25.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([38.0, 5.0, 5.0])]
     TAR_EPSILON = 0.1
 
     VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
@@ -197,23 +197,29 @@ elif SCENARIO == 4:
     W_slack = 1000.0
     W_form_dist = 5.0
     W_form_spread = 5.0
+    W_col = 2.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
-    # STARTS = np.array([[0.5, 5, 3.],
-    #                 #    [0.5, 3, 3.],
-    #                 #    [0.5, 4, 3.],
-    #                 #    [0.5, 6, 3.],
-    #                 ])
-    STARTS = np.array([[3., 6.5, 5.]])
+    STARTS = np.array([[1.5, 5, 3.],
+                    #    [1.5, 3, 3.],
+                    #    [1.5, 4, 3.],
+                    #    [0.5, 6, 3.],
+                    ])
+    # STARTS = np.array([[3., 6.5, 5.]])
     GOALS = STARTS + np.array([21., 0., 0.])
     NUM_ROBOT = STARTS.shape[0]
     FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.9, arc_angle_deg=180)
     # Obstacle x, y, r
     POLYGON_OBSTACLES = [
-    np.array([[5.0, 1.0], [6.0, 3.0], [4.0, 3.0]]),
-    np.array([[10.0, 6.0], [12.0, 6.0], [12.0, 8.0], [10.0, 8.0]])]
-    
+    np.array([[5.0, 6.0], [8.5, 6.5], [7.0, 8.0], [5.5, 8.5]]),
+    np.array([[11.0, 2.0], [13.0, 1.0], [13.0, 2.8], [11.0, 3.0]]),
+    np.array([[16.0, 9.0], [19.0, 8.5], [18.0, 7.8], [15.5, 7.5]]),
+    np.array([[22.0, 4.5], [24.0, 5.5], [24.0, 7.8], [21.5, 6.5]]),
+    np.array([[30.0, 2.5], [32.0, 3.5], [32.0, 5.8], [30.5, 5.5]]),
+    np.array([[32.0, 8.5], [34.0, 9.5], [33.0, 10.2], [31.5, 10.5]]),
+    ]
+    # POLYGON_OBSTACLES = []
     # OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
     #                       [ 7.0, 5.9, 0.8],
     #                       [ 7.0, 9.0, 0.8],
@@ -232,8 +238,7 @@ elif SCENARIO == 4:
 elif SCENARIO == 5:
     #Parameters of target
     TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),
-                      np.array([15.0, 7.0, 5.0]),np.array([40.0, 5.0, 5.0])]
+    TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([21, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([6.76428878,6.31261269, 5.0]),np.array([21, 5.0, 5.0])]
@@ -252,6 +257,7 @@ elif SCENARIO == 5:
     W_slack = 1000.0
     W_form_dist = 5.0
     W_form_spread = 5.0
+    W_col = 0.3
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
@@ -275,12 +281,12 @@ elif SCENARIO == 5:
                           [15.0, 1.5, 0.5],
                           [15.0, 4.5, 0.5],
                           [17.0, 9.0, 0.5],
-                          [19.0, 3.0, 0.5],
-                          [19.0, 7.0, 0.5]])
+                          [19.0, 3.5, 0.5],
+                          [19.0, 6.5, 0.5]])
     # OBSTACLES = np.array([])
     POLYGON_OBSTACLES = np.array([])
-    XLIM = [0, 42]
-    YLIM = [0, 12]
+    XLIM = [0, 25]
+    YLIM = [0, 15]
 
 FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)

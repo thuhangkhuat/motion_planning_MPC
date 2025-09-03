@@ -104,6 +104,7 @@ for iter in range(length):
     for j in range(OBSTACLES.shape[0]):
         x, y, r = OBSTACLES[j,:]
         a, b = getCircle(x, y, r)
+        ax.fill(a, b, color="gray", alpha=0.5, label="Obstacle" if j == 0 else "")
         ax.plot(a, b, **kwargs)
     ax.plot([], [], label="Obstacles", **kwargs)
 

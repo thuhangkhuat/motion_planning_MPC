@@ -170,7 +170,7 @@ class Robot:
         opti.solver('ipopt', opts_setting)
 
         # cost function
-        obj = self.costFunction(opt_states, opt_controls,self.traj_ref,slack_cbf, neighbor_robots)
+        obj = self.costFunction(opt_states, opt_controls,self.traj_ref,scan_data,slack_cbf, neighbor_robots)
         opti.minimize(obj)
 
         # provide the initial guess of the optimization targets
@@ -210,15 +210,28 @@ class Robot:
         _,traj_ref = RRT.remove_residual_node(raw_path, current_robot_pos, current_goal_pos, obstacle_points, ROBOT_RADIUS)
         return np.array(traj_ref)
 
-    def costFunction(self, opt_states, opt_controls, traj_ref,slack_vars, neighbors):
+    def costFunction(self, opt_states, opt_controls, traj_ref,scan_data,slack_vars, neighbors):
         c_u = self.costControl(opt_controls)
         c_tra = self.costTracking(opt_states, traj_ref)
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
-        total = c_tra + c_u  + c_slack + c_form
+        c_col = self.costCollision(opt_states, scan_data)
+        total = c_tra + c_u  + c_slack + c_form + c_col
                     
         return total
     
+    def costCollision(self, traj, scan_data):
+        cost_col = 0
+        ang, dist = scan_data
+        if dist.shape[0] != 0:
+            min_idx = np.argmin(dist)
+            obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
+            obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
+            for i in range(HORIZON_LENGTH):
+                obs_rel = traj[i,:2].T - np.array([obs_x, obs_y])
+                # cost_col += 1./(1+ca.exp(4*(ca.mtimes(obs_rel.T, obs_rel) - ROBOT_RADIUS)))
+                cost_col -= ca.log(ca.sumsqr(obs_rel) - ROBOT_RADIUS**2)
+        return W_col*cost_col
     def costSlack(self, slack_vars):
         positive_slack = ca.fmax(slack_vars, 0)
         return W_slack * ca.sum1(positive_slack**3)
@@ -300,7 +313,7 @@ class Robot:
         current_pos_start = self.state[:2]
         scores = []
         neighbor_predictions = []
-        beta = 0.5
+        beta = 0.4
         for other_robot in neighbors:
             other_pos_start = other_robot.state[:2]
             dist_sq_start = np.sum((current_pos_start - other_pos_start)**2)

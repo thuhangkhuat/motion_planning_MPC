@@ -348,49 +348,45 @@ def createGridMap(data, pose, goal):
 
 def openingMap(grid_map):
     rows, cols = grid_map.shape
-    expanded_grid = np.copy(grid_map) # Bắt đầu với bản đồ gốc
+    expanded_grid = np.copy(grid_map)
 
-    # Tìm tất cả các điểm vật cản ban đầu
     obstacle_rows, obstacle_cols = np.where(grid_map == 1)
 
-    # Đối với mỗi điểm vật cản, đánh dấu khu vực lân cận của nó là vật cản
-    # Bán kính mở rộng trong đơn vị lưới
     expand_grid_radius = int(ROBOT_RADIUS / GRID_SIZE) + EXPAND_SIZE 
     
     for r, c in zip(obstacle_rows, obstacle_cols):
         for dr in range(-expand_grid_radius, expand_grid_radius + 1):
             for dc in range(-expand_grid_radius, expand_grid_radius + 1):
-                # Chỉ mở rộng theo hình tròn
                 if dr*dr + dc*dc <= expand_grid_radius*expand_grid_radius:
                     new_r, new_c = r + dr, c + dc
                     if 0 <= new_r < rows and 0 <= new_c < cols:
-                        expanded_grid[new_r, new_c] = 1 # Đánh dấu là vật cản
+                        expanded_grid[new_r, new_c] = 1 
     return expanded_grid
     
 if __name__ == "__main__":
     from robot import Robot
-    pose = np.array([0.5, 5.0])
+    pose = np.array([3.5, 7.0])
 
-    robots = [Robot(0, np.concatenate([[ 5.5, 0., 5., 0,0,0]]), np.zeros(3)),
+    robots = [Robot(0, np.concatenate([[ 3.5, 7., 5., 0,0,0]]), np.zeros(3)),
               Robot(0, np.concatenate([[11., 6., 5., 0,0,0]]), np.zeros(3))]
 
     lidar = LidarScanner(range_min=0, range_max=SENSING_RADIUS,
-                        angle_min=-math.pi, angle_max=math.pi, resolution=math.pi/45)
+                        angle_min=-math.pi, angle_max=math.pi, resolution=math.pi/90)
     import time
     st = time.time()
     data = lidar.senseObstacle(np.concatenate([pose, [0]]), robots)
     ang, dist = data
     print(time.time()-st)
 
-    grid_map, start_idx, goal_idx = createGridMap(data, [0,0], [3,5])
-    grid_map = openingMap(grid_map)
+    # grid_map, start_idx, goal_idx = createGridMap(data, [0,0], [3,5])
+    # grid_map = openingMap(grid_map)
     # print(grid_map)
     plt.figure()
 
-    grid_map[start_idx]=10
-    grid_map[goal_idx] = 20
-    plt.imshow(grid_map, cmap='jet')
-    plt.title("2D LiDAR Grid Map")
+    # grid_map[start_idx]=10
+    # grid_map[goal_idx] = 20
+    # plt.imshow(grid_map, cmap='jet')
+    # plt.title("2D LiDAR Grid Map")
 
     plt.figure()
     # plot robots
@@ -404,6 +400,10 @@ if __name__ == "__main__":
         x, y, r = OBSTACLES[i,:]
         a, b = getCircle(x, y, r)
         plt.plot(a, b, "-k")
+
+    for poly in POLYGON_OBSTACLES:
+        plt.fill(poly[:, 0], poly[:, 1], color='gray', alpha=0.5)
+        plt.plot(np.append(poly[:, 0], poly[0,0]), np.append(poly[:, 1], poly[0,1]), 'k-')
 
     ox = pose[0] + np.cos(ang) * dist
     oy = pose[1] + np.sin(ang) * dist
