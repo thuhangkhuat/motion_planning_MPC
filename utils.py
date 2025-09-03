@@ -78,7 +78,7 @@ def is_collision(start:Node, end:Node, obstacle_points: np.array, robot_radius:f
             closest_point_on_line_y = start.y + t * unit_dy
         distance_to_segment = math.hypot(point[0] - closest_point_on_line_x, 
                                           point[1] - closest_point_on_line_y)
-        if distance_to_segment <= robot_radius + 1.0:
+        if distance_to_segment <= robot_radius + 0.25:
             return True
     return False
 

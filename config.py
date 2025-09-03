@@ -197,13 +197,13 @@ elif SCENARIO == 4:
     W_slack = 1000.0
     W_form_dist = 5.0
     W_form_spread = 5.0
-    W_col = 2.0
+    W_col = 0.0
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
     STARTS = np.array([[1.5, 5, 3.],
-                    #    [1.5, 3, 3.],
-                    #    [1.5, 4, 3.],
+                       [1.5, 3, 3.],
+                       [1.5, 4, 3.],
                     #    [0.5, 6, 3.],
                     ])
     # STARTS = np.array([[3., 6.5, 5.]])

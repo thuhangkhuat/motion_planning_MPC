@@ -151,11 +151,11 @@ for iter in range(length):
         plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
 
         #Plot corridor
-        if iter < len(corridors_data):
-            corridor = corridors_data[iter]
-            A = corridor.get('A')
-            b = corridor.get('b')
-            plot_convex_polygon(ax, A, b, robot_color)
+        # if iter < len(corridors_data):
+        corridor = corridors_data[iter]
+        A = corridor.get('A')
+        b = corridor.get('b')
+        plot_convex_polygon(ax, A, b, robot_color)
         
 
         # Plot FOV

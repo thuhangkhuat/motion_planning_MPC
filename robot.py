@@ -114,16 +114,16 @@ class Robot:
                     opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b)
 
         # add constraints to obstacle
-        ang, dist = scan_data
-        if dist.shape[0] != 0:
-            min_idx = np.argmin(dist)
-            obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
-            obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
-            for i in range(HORIZON_LENGTH+1):
-                # MPC constraint
-                temp_constraints_ = ca.sqrt((opt_states[i,0]-obs_x)**2 + \
-                                            (opt_states[i,1]-obs_y)**2) - ROBOT_RADIUS
-                opti.subject_to(temp_constraints_ > 0.0)
+        # ang, dist = scan_data
+        # if dist.shape[0] != 0:
+        #     min_idx = np.argmin(dist)
+        #     obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
+        #     obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
+        #     for i in range(HORIZON_LENGTH+1):
+        #         # MPC constraint
+        #         temp_constraints_ = ca.sqrt((opt_states[i,0]-obs_x)**2 + \
+        #                                     (opt_states[i,1]-obs_y)**2) - ROBOT_RADIUS
+        #         opti.subject_to(temp_constraints_ > 0.0)
 
         # add constrain to neighbors robot
         for i in range(HORIZON_LENGTH):
