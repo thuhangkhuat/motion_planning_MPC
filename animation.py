@@ -152,10 +152,10 @@ for iter in range(length):
 
         #Plot corridor
         # if iter < len(corridors_data):
-        corridor = corridors_data[iter]
-        A = corridor.get('A')
-        b = corridor.get('b')
-        plot_convex_polygon(ax, A, b, robot_color)
+        #     corridor = corridors_data[iter]
+        #     A = corridor.get('A')
+        #     b = corridor.get('b')
+        #     plot_convex_polygon(ax, A, b, robot_color)
         
 
         # Plot FOV
@@ -166,10 +166,10 @@ for iter in range(length):
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        if METHOD == 1:
-            if traj_refs is not None and len(traj_refs) > 0:
-                traj_ref = traj_refs[iter]
-                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
+        # if METHOD == 1:
+        #     if traj_refs is not None and len(traj_refs) > 0:
+        #         traj_ref = traj_refs[iter]
+        #         ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
 
 
     # ax.legend()

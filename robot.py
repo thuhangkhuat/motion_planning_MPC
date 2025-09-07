@@ -111,7 +111,7 @@ class Robot:
             self.corridors.append({'A': active_A, 'b': active_b})
             if active_A is not None:
                 for i in range(HORIZON_LENGTH + 1):
-                    opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b)
+                    opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b - ROBOT_RADIUS)
 
         # add constraints to obstacle
         # ang, dist = scan_data
@@ -216,9 +216,27 @@ class Robot:
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
         c_col = self.costCollision(opt_states, scan_data)
-        total = c_tra + c_u  + c_slack + c_form + c_col
+        if len(self.corridors) > 0:
+            c_corr = self.costCorridor(opt_states, self.corridors[-1]['A'], self.corridors[-1]['b'])
+        else:
+            c_corr = 0
+        total = c_tra + c_u  + c_slack + c_form + c_col + c_corr
                     
         return total
+    
+    def costCorridor(self, traj, A, b):
+        # print(self.corridors)
+        cost = 0
+        if A is None or b is None:
+            return 0
+        eps = 1e-2
+        # safe_margin = 0.2  
+        for i in range(HORIZON_LENGTH):
+            pos = traj[i, :2]
+            d = b - ca.mtimes(A, pos.T) - ROBOT_RADIUS  
+            cost += ca.sum1(1.0 / (d + eps))   # penalty reciprocal
+            # cost += ca.sum1(ca.fmax(0, safe_margin - d)**2)
+        return W_corridor * cost
     
     def costCollision(self, traj, scan_data):
         cost_col = 0

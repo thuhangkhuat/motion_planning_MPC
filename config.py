@@ -198,6 +198,7 @@ elif SCENARIO == 4:
     W_form_dist = 5.0
     W_form_spread = 5.0
     W_col = 0.0
+    W_corridor = 2.5
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
@@ -257,7 +258,8 @@ elif SCENARIO == 5:
     W_slack = 1000.0
     W_form_dist = 5.0
     W_form_spread = 5.0
-    W_col = 0.3
+    W_col = 0.0
+    W_corridor = 0.5
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5
@@ -286,7 +288,7 @@ elif SCENARIO == 5:
     # OBSTACLES = np.array([])
     POLYGON_OBSTACLES = np.array([])
     XLIM = [0, 25]
-    YLIM = [0, 15]
+    YLIM = [0, 13.5]
 
 FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)
