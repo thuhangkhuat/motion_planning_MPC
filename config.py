@@ -3,178 +3,287 @@ import time
 import matplotlib.pyplot as plt
 from formation import generate_circular_formation
 
-STEP_LENGTH = 0.5
-GOAL_SAMPLE_RATE = 0.01
-SEARCH_RADIUS = 80
-MAX_ITER = 5000
-# XLIM = [0, 25]
-# YLIM = [0, 10]
 
+# RRT parameters for uav
+STEP_LENGTH = 0.1
+GOAL_SAMPLE_RATE = 0.01
+MAX_ITER = 5000
+
+# Parameters for uav
 TIMESTEP = 0.1
-ROBOT_RADIUS = 0.15
-SENSING_RADIUS = 5.0
-SENSING_NEIGHBOR = 3.0 
+ROBOT_RADIUS = 0.25
+SENSING_RADIUS = 3.0
+SENSING_NEIGHBOR = 10.0 
 EPSILON = 0.1
 D_FRAC = 0.0
-GRID_SIZE = 0.1
-EXPAND_SIZE = 3
-EXPAND_SIZE_TAR = 10
-
-VMAX = 1.0
-UMAX = 5.0
-
+VMAX = 2.5
+UMAX = 5
 HORIZON_LENGTH = 10
-PATH_UPDATE_INTERVAL = 1
+
+# RRT parameters for target
+TAR_STEP_LENGTH = 1.0
+TAR_GOAL_SAMPLE_RATE = 0.1
+TAR_MAX_ITER = 5000
+TAR_RADIUS = 0.2
+SAFETY_MARGIN = 0.5
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
-SCENARIO = 4
+SCENARIO = 5
 if SCENARIO == 1:
     #Parameters of target
-    TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([4.0, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_MAX_SPEED = 6.5
+    TAR_WAYPOINTS = [np.array([40.0, 50.0,0]),np.array([300.0, 300.0,0]), np.array([400.0, 80.0,0])]
     TAR_EPSILON = 0.1
 
     # Parameters of the environment
-    VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    MIN_SEPARATION = 1.0    # d_min: minimum distance between robots
-    MAX_SEPARATION = 8.0    # d_max: maximum distance between robots
+    VIEWING_RADIUS = 30    # R_view: radius of the viewing area
+    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
 
-    FORMATION_OFFSETS = np.array([
-    [0.0, 0.0, 0.0],                          # Drone 0
-    [VIEWING_RADIUS * 0.5,  VIEWING_RADIUS * 0.5, 0.0], # Drone 1
-    [VIEWING_RADIUS * 0.5, -VIEWING_RADIUS * 0.5, 0.0]  # Drone 2
-    ])
+
     # Parameters of FOV
-    HFOV = 60.0             # Horizontal field of view
-    VFOV = 80.0             # Vertical field of view
+    HFOV = 90.0             # Horizontal field of view
+    VFOV = 90.0             # Vertical field of view
 
     # Weights for MPC
-    W_tra = 0.5
+    W_tra = 10
+    W_gui = 1
     W_u = 4e-1
-    W_col = 1.5
-    W_slack = 6.0
-    W_form_dist = 3.0
-    W_form_struct = 1.0
+    W_slack = 10.0
+    W_form_dist = 5.0
+    W_form_spread = 5.0
+    W_col = 0.0
+    W_corridor = 10
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[2.5, 4., 3.],
-                       [2.5, 5., 3.],
-                       [2.5, 3., 3.],])
+    STARTS = np.array([[40, 40, 3.],
+                       [40, 30, 3.],
+                       [30, 40, 3.],])
     NUM_ROBOT = STARTS.shape[0]
     GOALS = STARTS + np.array([21., 0., 0.])
     
-    # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
-                          [ 7.0, 6.7, 0.8],
-                          [ 7.0, 9.0, 0.8],
-                          [ 9.0, 1.5, 0.8],
-                          [12.0, 3.7, 0.8],
-                          [12.0, 7.5, 0.8],
-                          [15.0, 1.5, 0.8],
-                          [15.0, 6.0, 0.8],
-                          [17.0, 9.0, 0.8],
-                          [19.0, 3.5, 0.8],
-                          [19.0, 6.5, 0.8]])
-    # OBSTACLES = np.array([])
-    XLIM = [0, 25]
-    YLIM = [0, 10]
+     # Obstacle x, y, r
+    POLYGON_OBSTACLES = [
+    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
+    np.array([[100.0, 120.0], [130.0, 120.0], [130.0, 160], [100, 160]]),
+    np.array([[200,200], [230, 200], [230, 270], [200, 270]]),
+    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
+    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
+    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
+    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
+    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
+    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
+    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
+    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
+    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
+  
+
+    
+    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
+
+    # OBSTACLES = np.array([[ 70.0, 20.5, 8],
+    #                       [ 70.0, 60.7, 8],
+    #                       [ 70.0, 90.0, 8],
+    #                       [ 90.0, 10.5, 8],
+    #                       [120.0, 30.7, 8],
+    #                       [120.0, 70.5, 8],
+    #                       [150.0, 10.5, 8],
+    #                       [150.0, 60.0, 8],
+    #                       [170.0, 90.0, 8],
+    #                       [190.0, 30.5, 8],
+    #                       [190.0, 60.5, 8]])
+
+    RECTANGLE_OBSTACLES = [[50, 50, 30,30], 
+                         [100, 120,30, 40],
+                         [200,200,30, 70],
+                         [300,100,60, 40],
+                         [170,80,50,30],
+                         [345,235, 60,40],
+                         [380,350,40,60],
+                         [170,340,50,30],
+                         [70,370,30,50],
+                         [220,430,30,30],
+                         [50,240,40,40],
+                         [390,35,40,40]]
+    
+
+    # RECTANGLE_OBSTACLES = []
+    OBSTACLES = np.array([])
+    XLIM = [0, 500]
+    YLIM = [0, 500]
 elif SCENARIO == 2:
     #Parameters of target
-    TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([10.0, 7.0, 5.0]),
-                     np.array([15.0, 3.0, 5.0]),np.array([21.0, 5.0, 5.0])]
-    # TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_MAX_SPEED = 3.5
+    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([120.0, 120.0,0]), np.array([160.0, 42.0,0])]
     TAR_EPSILON = 0.1
 
     # Parameters of the environment
-    VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = 1.5   # desired distance between robots
-    OFFSET_SEPARATION = 0.5    # offset distance between robots
+    VIEWING_RADIUS = 20    # R_view: radius of the viewing area
+    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
+
+
     # Parameters of FOV
-    HFOV = 60.0             # Horizontal field of view
-    VFOV = 80.0             # Vertical field of view
+    HFOV = 90.0             # Horizontal field of view
+    VFOV = 90.0             # Vertical field of view
 
     # Weights for MPC
-    W_tra = 5.0
+    W_tra = 10
+    W_gui = 1
     W_u = 4e-1
-    W_col = 1
-    W_slack = 100.0
-    W_form_dist = 2.0
-    W_form_struct = 0.0
+    W_slack = 10.0
+    W_form_dist = 5.0
+    W_form_spread = 5.0
+    W_col = 0.0
+    W_corridor = 10
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[1., 5., 3.],
-                       [1., 4., 3.],
-                       [1., 6., 3.]])
-                    #    [1., 6.5, 3.]
-                    #    [1., 7., 3.]])
+    STARTS = np.array([[10, 10, 3.],
+                       [50, 10, 3.],
+                       [20, 50, 3.],])
     NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS -1 , arc_angle_deg=60)
-
     GOALS = STARTS + np.array([21., 0., 0.])
     
-    # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.7, 0.8],
-                          [ 7.0, 5.8, 0.8],
-                          [ 7.0, 9.0, 0.8],
-                          [ 9.0, 1.5, 0.8],
-                          [12.0, 3.5, 0.8],
-                          [12.0, 7.5, 0.8],
-                          [15.0, 3.1, 0.8],
-                          [15.0, 6.4, 0.8],
-                          [17.0, 9.0, 0.8],
-                          [19.0, 3.2, 0.8],
-                          [19.0, 6.6, 0.8]])
-    # OBSTACLES = np.array([])
-    XLIM = [0, 25]
-    YLIM = [0, 10]
+     # Obstacle x, y, r
+    POLYGON_OBSTACLES = [
+    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
+    np.array([[100.0, 120.0], [130.0, 120.0], [130.0, 160], [100, 160]]),
+    np.array([[200,200], [230, 200], [230, 270], [200, 270]]),
+    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
+    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
+    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
+    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
+    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
+    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
+    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
+    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
+    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
+  
+    POLYGON_OBSTACLES = [poly * 0.4 for poly in POLYGON_OBSTACLES]
+
+    
+    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
+
+    # OBSTACLES = np.array([[ 70.0, 20.5, 8],
+    #                       [ 70.0, 60.7, 8],
+    #                       [ 70.0, 90.0, 8],
+    #                       [ 90.0, 10.5, 8],
+    #                       [120.0, 30.7, 8],
+    #                       [120.0, 70.5, 8],
+    #                       [150.0, 10.5, 8],
+    #                       [150.0, 60.0, 8],
+    #                       [170.0, 90.0, 8],
+    #                       [190.0, 30.5, 8],
+    #                       [190.0, 60.5, 8]])
+
+    RECTANGLE_OBSTACLES = [
+                        #  [50, 50, 30,30], 
+                         [100, 120,30, 40],
+                         [200,200,30, 70],
+                         [300,100,60, 40],
+                         [170,80,50,30],
+                         [345,235, 60,40],
+                         [380,350,40,60],
+                         [170,340,50,30],
+                         [70,370,30,50],
+                         [220,430,30,30],
+                         [50,240,40,40],
+                         [390,35,40,40]]
+    
+    RECTANGLE_OBSTACLES = [np.array(rect) * 0.4 for rect in RECTANGLE_OBSTACLES]
+    
+
+    # RECTANGLE_OBSTACLES = []
+    OBSTACLES = np.array([])
+    XLIM = [0, 200]
+    YLIM = [0, 200]
 elif SCENARIO == 3:
     #Parameters of target
-    TAR_MAX_SPEED = 0.8
-    TAR_WAYPOINTS = [np.array([5.0, 2.0, 5.0]),np.array([10.0, 7.0, 5.0]),
-                     np.array([15.0, 5.0, 5.0]),np.array([21.0, 5.0, 5.0])]
+    TAR_MAX_SPEED = 1.5
+    TAR_WAYPOINTS = [np.array([4.0, 5.0,0]),np.array([24.0, 24.0,0]), np.array([32.0, 8.4,0])]
     TAR_EPSILON = 0.1
 
-    VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = 1.5   # desired distance between robots
-    
+    # Parameters of the environment
+    VIEWING_RADIUS = 5    # R_view: radius of the viewing area
+    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
+
+
     # Parameters of FOV
-    HFOV = 60.0             # Horizontal field of view
-    VFOV = 80.0             # Vertical field of view
+    HFOV = 90.0             # Horizontal field of view
+    VFOV = 90.0             # Vertical field of view
+
     # Weights for MPC
-    W_tra = 3.0
+    W_tra = 10
+    W_gui = 1
     W_u = 4e-1
-    W_col = 2.5
     W_slack = 10.0
-    W_form_dist = 3
-    W_form_struct = 0
+    W_form_dist = 5.0
+    W_form_spread = 5.0
+    W_col = 0.0
+    W_corridor = 2.5
 
     # Weights for CBF
-    DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1.5, 5., 3.],
-                       [1.5, 4., 3.],
-                       [1.5, 6., 3.],])
-    # STARTS = np.array([[2., 3., 5.]])
-    GOALS = STARTS + np.array([21., 0., 0.])
+    DT_CBF_GAMMA = 0.5 
+    STARTS = np.array([[5, 5, 3.],
+                       [10, 5, 3.],
+                       [10, 25, 3.],])
     NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS - 1, arc_angle_deg=60)
-    # Obstacle x, y, r
-    OBSTACLES = np.array([[ 7.0, 2.5, 0.8],
-                          [ 7.0, 5.9, 0.8],
-                          [ 7.0, 9.0, 0.8],
-                          [ 9.0, 1.5, 0.8],
-                          [12.0, 4.0, 0.8],
-                          [12.0, 7.5, 0.8],
-                          [15.0, 1.5, 0.8],
-                          [15.0, 6.0, 0.8],
-                          [17.0, 9.0, 0.8],
-                          [19.0, 3.5, 0.8],
-                          [19.0, 6.5, 0.8]])
-    XLIM = [0, 25]
-    YLIM = [0, 10]
+    GOALS = STARTS + np.array([21., 0., 0.])
+    
+     # Obstacle x, y, r
+    POLYGON_OBSTACLES = [
+    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
+    np.array([[100.0, 120.0], [130.0, 120.0], [130.0, 160], [100, 160]]),
+    np.array([[200,200], [230, 200], [230, 270], [200, 270]]),
+    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
+    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
+    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
+    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
+    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
+    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
+    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
+    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
+    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
+  
+    POLYGON_OBSTACLES = [poly * 0.03 for poly in POLYGON_OBSTACLES]
+
+    
+    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
+
+    # OBSTACLES = np.array([[ 70.0, 20.5, 8],
+    #                       [ 70.0, 60.7, 8],
+    #                       [ 70.0, 90.0, 8],
+    #                       [ 90.0, 10.5, 8],
+    #                       [120.0, 30.7, 8],
+    #                       [120.0, 70.5, 8],
+    #                       [150.0, 10.5, 8],
+    #                       [150.0, 60.0, 8],
+    #                       [170.0, 90.0, 8],
+    #                       [190.0, 30.5, 8],
+    #                       [190.0, 60.5, 8]])
+
+    RECTANGLE_OBSTACLES = [
+                        #  [50, 50, 30,30], 
+                         [100, 120,30, 40],
+                         [200,200,30, 70],
+                         [300,100,60, 40],
+                         [170,80,50,30],
+                         [345,235, 60,40],
+                         [380,350,40,60],
+                         [170,340,50,30],
+                         [70,370,30,50],
+                         [220,430,30,30],
+                         [50,240,40,40],
+                         [390,35,40,40]]
+    
+    RECTANGLE_OBSTACLES = [np.array(rect) * 0.03 for rect in RECTANGLE_OBSTACLES]
+    
+
+    # RECTANGLE_OBSTACLES = []
+    OBSTACLES = np.array([])
+    XLIM = [0, 50]
+    YLIM = [0, 50]
 
 elif SCENARIO == 4:
     #Parameters of target
@@ -238,6 +347,8 @@ elif SCENARIO == 4:
 
 elif SCENARIO == 5:
     #Parameters of target
+    
+    VMAX = 2.0
     TAR_MAX_SPEED = 0.8
     TAR_WAYPOINTS = [np.array([3, 5, 5.0]),np.array([10.0, 7.0, 5.0]),np.array([21.0, 5.0, 5.0])]
     # TAR_WAYPOINTS = [np.array([8, 10.0, 5.0]),np.array([17.5, 5.0, 5.0]), np.array([20, 8.0, 5.0])]
@@ -286,6 +397,7 @@ elif SCENARIO == 5:
                           [19.0, 3.5, 0.5],
                           [19.0, 6.5, 0.5]])
     # OBSTACLES = np.array([])
+    RECTANGLE_OBSTACLES = []
     POLYGON_OBSTACLES = np.array([])
     XLIM = [0, 25]
     YLIM = [0, 13.5]

@@ -112,19 +112,8 @@ class Robot:
             if active_A is not None:
                 for i in range(HORIZON_LENGTH + 1):
                     opti.subject_to(ca.mtimes(active_A, opt_states[i, :2].T) <= active_b - ROBOT_RADIUS)
-
-        # add constraints to obstacle
-        # ang, dist = scan_data
-        # if dist.shape[0] != 0:
-        #     min_idx = np.argmin(dist)
-        #     obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
-        #     obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
-        #     for i in range(HORIZON_LENGTH+1):
-        #         # MPC constraint
-        #         temp_constraints_ = ca.sqrt((opt_states[i,0]-obs_x)**2 + \
-        #                                     (opt_states[i,1]-obs_y)**2) - ROBOT_RADIUS
-        #         opti.subject_to(temp_constraints_ > 0.0)
-
+                    
+                
         # add constrain to neighbors robot
         for i in range(HORIZON_LENGTH):
             for other_robot in neighbor_robots:
@@ -162,11 +151,12 @@ class Robot:
             con = opt_controls[i, :]
             opti.subject_to(ca.sumsqr(con) <= UMAX**2)
         
-        opts_setting = {'ipopt.max_iter': 5000,   #1e5
+        opts_setting = {'ipopt.max_iter': 10000,   #1e5
                         'ipopt.print_level': 0,
                         'ipopt.tol': 1e-4,  #1e-6
                         'ipopt.acceptable_tol': 1e-2,  #1e-6
-                        'print_time': 0}
+                        'print_time': 0,
+                        'ipopt.acceptable_iter': 15}
         opti.solver('ipopt', opts_setting)
 
         # cost function
@@ -176,10 +166,7 @@ class Robot:
         # provide the initial guess of the optimization targets
         opti.set_initial(opt_states, self.states_prediction)
         opti.set_initial(opt_controls, self.controls_prediction)
-
-        # solve the problem
         sol = opti.solve()
-        
         ## obtain the control input
         self.controls_prediction = sol.value(opt_controls)
         self.states_prediction = sol.value(opt_states)
@@ -193,13 +180,10 @@ class Robot:
         current_goal_pos = goal[:2]
         should_replan_fully = (not self.is_planner_initialized or len(self.planner.vertex) < 10)
         if not should_replan_fully:
-            # print(f"Robot {self.index}: Updating RRT tree...")
             success = self.planner.update_root(current_robot_pos, obstacle_points, ROBOT_RADIUS)
             if not success:
-                # print(f"Robot {self.index}: Root update failed. Forcing full replan.")
                 should_replan_fully = True
         if should_replan_fully:
-            # print(f"Robot {self.index}: Performing FULL REPLAN.")
             self.planner.initialize(current_robot_pos)
             self.is_planner_initialized = True
         
@@ -215,41 +199,42 @@ class Robot:
         c_tra = self.costTracking(opt_states, traj_ref)
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
-        c_col = self.costCollision(opt_states, scan_data)
         if len(self.corridors) > 0:
             c_corr = self.costCorridor(opt_states, self.corridors[-1]['A'], self.corridors[-1]['b'])
         else:
             c_corr = 0
-        total = c_tra + c_u  + c_slack + c_form + c_col + c_corr
+        total = c_tra + c_u  + c_slack + c_form  + c_corr
                     
         return total
     
     def costCorridor(self, traj, A, b):
-        # print(self.corridors)
         cost = 0
         if A is None or b is None:
             return 0
         eps = 1e-2
-        # safe_margin = 0.2  
+        safe_margin = 0.2  
         for i in range(HORIZON_LENGTH):
             pos = traj[i, :2]
             d = b - ca.mtimes(A, pos.T) - ROBOT_RADIUS  
             cost += ca.sum1(1.0 / (d + eps))   # penalty reciprocal
             # cost += ca.sum1(ca.fmax(0, safe_margin - d)**2)
         return W_corridor * cost
+
+    # def costCorridor(self, traj, A, b):
+    #     cost = 0
+    #     if A is None or b is None:
+    #         return 0
+    #     for i in range(HORIZON_LENGTH + 1):
+    #         pos = traj[i, :2]
+    #         # d > 0 
+    #         d = b - ca.mtimes(A, pos.T) - ROBOT_RADIUS
+            
+    #         #d < 0
+    #         violation = ca.fmax(0, -d)
+    #         cost += ca.sumsqr(violation)
+                
+    #     return W_corridor * cost
     
-    def costCollision(self, traj, scan_data):
-        cost_col = 0
-        ang, dist = scan_data
-        if dist.shape[0] != 0:
-            min_idx = np.argmin(dist)
-            obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
-            obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
-            for i in range(HORIZON_LENGTH):
-                obs_rel = traj[i,:2].T - np.array([obs_x, obs_y])
-                # cost_col += 1./(1+ca.exp(4*(ca.mtimes(obs_rel.T, obs_rel) - ROBOT_RADIUS)))
-                cost_col -= ca.log(ca.sumsqr(obs_rel) - ROBOT_RADIUS**2)
-        return W_col*cost_col
     def costSlack(self, slack_vars):
         positive_slack = ca.fmax(slack_vars, 0)
         return W_slack * ca.sum1(positive_slack**3)
@@ -273,7 +258,7 @@ class Robot:
         else:
             dist_guide = 0
             dist_goal = ca.sumsqr(traj[-1, :2] - self.goal[:2].reshape(1, 2))
-            cost_tra += (dist_goal - (VIEWING_RADIUS -1)**2)**2
+            cost_tra += (dist_goal - (VIEWING_RADIUS -TAR_MAX_SPEED)**2)**2
         cost_gui +=  dist_guide**2
         return W_tra*cost_tra + W_gui*cost_gui
     
@@ -290,41 +275,6 @@ class Robot:
                 cost_col += 1 / (margin + 1e-4)
         return W_col*cost_col
     
-    # def costFormation(self, traj, neighbors):
-    #     cost_dist = 0 
-    #     cost_spread = 0
-    #     if not neighbors:
-    #         cost_dist = 0
-    #         cost_spread = 0
-    #     current_predicted_pos = self.states_prediction[:, :2]
-    #     min_dist_sq_avg = float('inf')
-    #     nearest_neighbor = None
-    #     other_neighbors = []
-    #     for other_robot in neighbors:
-    #         if self.index >= other_robot.index:
-    #             continue
-    #         other_predicted_pos = other_robot.states_prediction[:, :2]
-    #         avg_dist_sq = np.mean(np.sum((current_predicted_pos - other_predicted_pos)**2, axis=1))
-    #         if avg_dist_sq < min_dist_sq_avg:
-    #             if nearest_neighbor is not None:
-    #                 other_neighbors.append(nearest_neighbor)
-    #             min_dist_sq_avg = avg_dist_sq
-    #             nearest_neighbor = other_robot
-    #         else:
-    #             other_neighbors.append(other_robot)
-    #     for i in range(HORIZON_LENGTH):
-    #         current_pos = traj[i, :2]
-    #         if nearest_neighbor is not None:
-    #             other_pos = ca.reshape(ca.DM(nearest_neighbor.states_prediction[i, :2]), 1, 2)
-    #             dist_sq = ca.sumsqr(current_pos - other_pos)
-    #             cost_dist += (dist_sq - DESIRED_SEPARATION**2)**2
-
-    #         for other_robot in other_neighbors:
-    #             other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]),1,2)
-    #             dist_sq_other = ca.sumsqr(current_pos - other_pos)
-    #             cost_spread -= dist_sq_other
-    #     return W_form_dist*cost_dist + W_form_spread*cost_spread
-
     def costFormation(self, traj, neighbors):
         if not neighbors:
             return 0

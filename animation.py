@@ -109,7 +109,7 @@ for iter in range(length):
     ax.plot([], [], label="Obstacles", **kwargs)
 
     for poly in POLYGON_OBSTACLES:
-        ax.fill(poly[:, 0], poly[:, 1], color='gray', alpha=0.5, label="Polygon Obstacles" if poly is POLYGON_OBSTACLES[0] else "")
+        ax.fill(poly[:, 0], poly[:, 1], color='black', alpha=1.0, label="Polygon Obstacles" if poly is POLYGON_OBSTACLES[0] else "")
         ax.plot(np.append(poly[:, 0], poly[0,0]), np.append(poly[:, 1], poly[0,1]), 'k-', linewidth=1.5)
 
     # Plot target trajectory
@@ -151,25 +151,25 @@ for iter in range(length):
         plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
 
         #Plot corridor
-        # if iter < len(corridors_data):
-        #     corridor = corridors_data[iter]
-        #     A = corridor.get('A')
-        #     b = corridor.get('b')
-        #     plot_convex_polygon(ax, A, b, robot_color)
+        if iter < len(corridors_data):
+            corridor = corridors_data[iter]
+            A = corridor.get('A')
+            b = corridor.get('b')
+            plot_convex_polygon(ax, A, b, robot_color)
         
 
         # Plot FOV
-        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],5,path[iter, 1:][3],path[iter, 1:][4]]
+        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],VIEWING_RADIUS,path[iter, 1:][3],path[iter, 1:][4]]
         fov_corners,_,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV,prev_yaw=0.0)
         if fov_corners is not None:
             ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none')
             ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
 
         # Plot trajectory reference
-        # if METHOD == 1:
-        #     if traj_refs is not None and len(traj_refs) > 0:
-        #         traj_ref = traj_refs[iter]
-        #         ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
+        if METHOD == 1:
+            if traj_refs is not None and len(traj_refs) > 0:
+                traj_ref = traj_refs[iter]
+                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
 
 
     # ax.legend()

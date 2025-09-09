@@ -7,13 +7,14 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 import pickle
-import target as Target
+from target_rrt import SequentialRRTPlanner
+from target import Target
 
 
 if __name__ == "__main__":
 
     # Initialize target
-    target = Target.Target(TAR_WAYPOINTS)
+    target = SequentialRRTPlanner(TAR_WAYPOINTS)
     target.generateTrajectory()
     target_traj = []
     robots = []
@@ -34,23 +35,13 @@ if __name__ == "__main__":
             # compute velocity using nmpc
             start = time.time()
             for i in range(NUM_ROBOT):
-                offset_vector = FORMATION_OFFSETS[i]
-                # print(f"[INFO] Robot {i} offset vector: {offset_vector}")
-                # virtual_target_pos = target.state.copy()  + offset_vector
                 robots[i].goal = target.state.copy()
                 robots[i].computeControlSignal(robots)
                 compute_times.append(time.time()-start)
             iter += 1
             if iter % 10 == 0:
                 print("Iteration {}".format(iter))
-
-            # Reach terminal condition
-            # count = 0
-            # for i in range(NUM_ROBOT):
-            #     if np.linalg.norm(robots[i].state[:3] - robots[i].goal) < EPSILON:
-            #         count += 1
-            # if count == NUM_ROBOT:
-            #     break
+                
             distance_to_final_dest = np.linalg.norm(target.state - target.final_destination)
             if distance_to_final_dest < 0.3: 
                 print(f"[INFO] Target has reached its final destination. Stopping simulation.")

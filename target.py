@@ -122,10 +122,10 @@ if __name__ == "__main__":
         b = y + r * np.sin(theta)
         return a, b
     target_waypoints = [
-        np.array([5.0, 5.0, 5.0]),   # Điểm A (Bắt đầu)
-        np.array([10.0, 9.0, 5.0]),  # Điểm B
-        np.array([15.0, 5.0, 5.0]),  # Điểm C
-        np.array([21.0, 5.0, 5.0])   # Điểm D (Kết thúc)
+        np.array([50.0, 50.0, 5.0]),   # Điểm A (Bắt đầu)
+        np.array([100.0, 90.0, 5.0]),  # Điểm B
+        np.array([150.0, 50.0, 5.0]),  # Điểm C
+        np.array([210.0, 50.0, 5.0])   # Điểm D (Kết thúc)
     ]
     target = Target(target_waypoints)
     target.generateTrajectory()

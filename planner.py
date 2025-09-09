@@ -73,7 +73,6 @@ class RRT:
 
         node_near_goal = self.nearest_neighbor(self.vertex, self.s_goal)
         
-        # Khi kết nối đến goal, không bao giờ bỏ qua va chạm
         if not is_collision(node_near_goal, self.s_goal, obstacle_points, robot_radius, ignore_start=False):
             self.s_goal.parent = node_near_goal
             path = self.extract_path(self.s_goal)
