@@ -111,7 +111,7 @@ def main():
     box_size = max_coords - min_coords
     # Thêm một chút padding cho an toàn
     # box = np.array([[box_size[0] + 2, box_size[1] + 2]])
-    box = np.array([[2, 2]])
+    box = np.array([[1, 30]])
     print("Đang thực hiện phân rã lồi bằng hàm API cấp cao...")
     # Gọi hàm API mới. Nó trả về một danh sách các ma trận A và vector b.
     list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_reference, box)
@@ -125,6 +125,13 @@ def main():
         print(f"\n--- Đa giác {i+1} ---")
         print(f"Ma trận A (shape {A.shape}):\n{np.round(A, 3)}")
         print(f"Vector b (shape {b.shape}):\n{np.round(b, 3)}")
+    
+    # path_reference = np.array ([[60.84432619,38.38450281], [71.13215623,65.05424896]])
+    # list_A = np.array([[ 0.93299076, -0.35990033],
+    #    [-0.93299076,  0.35990033],
+    #    [ 0.35990033,  0.93299076],
+    #    [-0.35990033, -0.93299076]])
+    # list_b = np.array([[ 72.95259893],[-12.95259893],[116.29549932],[-27.71027925]])
 
     ax = pdc.visualize_environment(Al=list_A, bl=list_b, p=path_reference, planar=True)
 

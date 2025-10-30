@@ -35,6 +35,7 @@ class Robot:
         
         #Store the corridor
         self.corridors = []
+        self.corridors_plot = []
         # Store robot path
         self.path = []
         self.traj_refs = []
@@ -66,6 +67,7 @@ class Robot:
         # Store
         self.path.append(np.concatenate([[self.time_stamp], self.state, self.control]))
         self.traj_refs.append(self.traj_ref)
+        self.corridors_plot.append({'A': self.list_A, 'b': self.list_b})
 
         # Shift predictive values
         self.states_prediction[:-1,:] = self.states_prediction[1:,:]
@@ -79,7 +81,8 @@ class Robot:
         obstacle_points = self.lidar.getObstaclePoints(scan_data, np.concatenate([self.state[:2], [0]]))
         self.traj_ref = self.getOrientedGoalTrajectory(obstacle_points, self.goal)
         target_pos = self.goal[:3].reshape(1, 3) 
-        list_A, list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
+        self.list_A, self.list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
+        # self.corridors_plot.append({'A': self.list_A, 'b': self.list_b})
         neighbor_robots = self.getNeighbors(robots)
         
         opti = ca.Opti()
@@ -101,9 +104,9 @@ class Robot:
             opti.subject_to(opt_states[i+1, :] == x_next)
 
         # add constraints with conver polygon -> liner constraints
-        if list_A:
+        if self.list_A:
             active_A, active_b = None, None
-            for A, b in zip(list_A, list_b):
+            for A, b in zip(self.list_A, self.list_b):
                 if np.all(A @ self.state[:2] - b.flatten() <= 1e-5):
                     active_A = A
                     active_b = b
@@ -199,19 +202,28 @@ class Robot:
         c_tra = self.costTracking(opt_states, traj_ref)
         c_form = self.costFormation(opt_states, neighbors)
         c_slack = self.costSlack(slack_vars) 
-        if len(self.corridors) > 0:
-            c_corr = self.costCorridor(opt_states, self.corridors[-1]['A'], self.corridors[-1]['b'])
-        else:
-            c_corr = 0
+        # if len(self.corridors) > 0:
+        #     c_corr = self.costCorridor(opt_states, self.corridors[-1]['A'], self.corridors[-1]['b'])
+        # else:
+            # c_corr = 0
+        c_corr = self.costCorridor(opt_states, self.list_A, self.list_b)
         total = c_tra + c_u  + c_slack + c_form  + c_corr
                     
         return total
     
     def costCorridor(self, traj, A, b):
         cost = 0
+        if A is None or b is None or len(A) == 0:
+            return 0.
         if A is None or b is None:
             return 0
-        eps = 1e-2
+        if isinstance(A, list) and len(A) == 1:
+            A = A[0]
+        if isinstance(b, list) and len(b) == 1:
+            b = b[0]
+        A = np.asarray(A)
+        b = np.asarray(b)
+        eps = 1e-1
         safe_margin = 0.2  
         for i in range(HORIZON_LENGTH):
             pos = traj[i, :2]
@@ -349,14 +361,14 @@ class Robot:
         if obstacle_points.shape[0] < 1: 
             return [], []
 
-        box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
+        box = np.array([[VIEWING_RADIUS +20, VIEWING_RADIUS +20]])
 
         try:
-            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_ref, box)
+            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_ref[0:2], box)
             return list_A, list_b
         except Exception as e:
             print(f"Error in generating safe corridor: {e}")
-            return [], []
+            # return [], []
     
 
    

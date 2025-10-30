@@ -95,7 +95,7 @@ target_trajectory = data[0]["tar_traj"]
 if SCENARIO == 1:
     size = (8,3.5)
 elif SCENARIO == 2:
-    size = (8,8)
+    size = (12,5.5)
 elif SCENARIO == 3:
     size = (12,5.5)
 elif SCENARIO == 4:
@@ -106,12 +106,9 @@ plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
 ax = plt.axes()
-for iter in range(length):
-    ax.cla()
-
+for iter_final in [length - 1]:
     # Plot start and goal
-    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50)
-    # ax.scatter(TAR_GOALS[0], TAR_GOALS[1], marker="^", s=50, label="Target")
+    ax.scatter(STARTS[:,0], STARTS[:,1], marker="s", s=50, label="Start Positions")
 
     # Plot obstacles
     kwargs = {'color': 'k', 'linewidth': 1.5, 'linestyle': '-'}
@@ -120,73 +117,81 @@ for iter in range(length):
         a, b = getCircle(x, y, r)
         ax.fill(a, b, color="gray", alpha=0.5, label="Obstacle" if j == 0 else "")
         ax.plot(a, b, **kwargs)
-    ax.plot([], [], label="Obstacles", **kwargs)
+    # ax.plot([], [], label="Obstacles", **kwargs) # Dòng này có thể không cần thiết
 
     for poly in POLYGON_OBSTACLES:
-        ax.fill(poly[:, 0], poly[:, 1], color='black', alpha=1.0, label="Polygon Obstacles" if poly is POLYGON_OBSTACLES[0] else "")
+        ax.fill(poly[:, 0], poly[:, 1], color='black', alpha=1.0, label="Polygon Obstacle" if poly is POLYGON_OBSTACLES[0] else "")
         ax.plot(np.append(poly[:, 0], poly[0,0]), np.append(poly[:, 1], poly[0,1]), 'k-', linewidth=1.5)
 
-    # Plot target trajectory
-    # ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
-    ax.plot(target_trajectory[iter, 0], target_trajectory[iter, 1], 'rX', markersize=10, label="Target")
+    # Plot ENTIRE target trajectory
+    ax.plot(target_trajectory[:, 0], target_trajectory[:, 1], 'r--', label="Target Path")
+    # Plot final position of the target
+    ax.plot(target_trajectory[iter_final, 0], target_trajectory[iter_final, 1], 'rX', markersize=10, label="Target Final Position")
 
-    target_current_pos = target_trajectory[iter]
-    circle_x, circle_y = getCircle(target_current_pos[0], target_current_pos[1], VIEWING_RADIUS)
+    # Plot viewing radius around the target's final position
+    target_final_pos = target_trajectory[iter_final]
+    circle_x, circle_y = getCircle(target_final_pos[0], target_final_pos[1], VIEWING_RADIUS)
     ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
 
-    # Plot path
+    # Plot each robot's data
     for i in range(NUM_ROBOT):
         robot_color = COLORS[i % len(COLORS)]
         path = data[i]["path"]
         traj_refs = data[i]["traj_refs"]
         corridors_data = data[i]["corridors"]
 
-        # Plot drone
-        robot_current_pos = path[iter, 1:4]
-        robot_current_vel = path[iter, 4:6]
-        if np.linalg.norm(robot_current_vel) > 1e-5:
-            yaw = math.atan2(robot_current_vel[1], robot_current_vel[0])
-        else:
-            yaw = 0 
-        T = transformation_matrix([robot_current_pos[0], robot_current_pos[1], robot_current_pos[2], yaw])
+        # 1. Plot the ENTIRE path of the drone
+        plt.plot(path[:,1], path[:,2], color=robot_color, label=f"Drone {i} Path")
+
+        # 2. Plot FOV at selected points along the path
+        num_fov_to_plot = 10  
+        path_length = len(path)
+        indices_to_plot_fov = np.linspace(0, path_length - 1, num_fov_to_plot, dtype=int)
+
+        for idx in indices_to_plot_fov:
+            pos = path[idx, 1:3]
+            vel = path[idx, 4:6]
+            
+            current_yaw = math.atan2(vel[1], vel[0]) if np.linalg.norm(vel) > 1e-5 else 0.0
+            
+
+            robot_state_for_fov = [pos[0], pos[1], VIEWING_RADIUS, vel[0], vel[1]]
+            fov_corners, _, _, _ = calculate_fov_corners(robot_state_for_fov, HFOV, VFOV, prev_yaw=current_yaw)
+            
+            if fov_corners is not None:
+                alpha_fov = 0.15 if idx == indices_to_plot_fov[-1] else 0.08
+                ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=alpha_fov, fc=robot_color, ec='none')
+                ax.plot(fov_corners[:, 0], fov_corners[:, 1], color=robot_color, linewidth=0.5, alpha=0.3)
+
+        # 3. Plot the final state of the drone (body, propellers)
+        robot_final_pos = path[iter_final, 1:4]
+        robot_final_vel = path[iter_final, 4:6]
+        yaw_final = math.atan2(robot_final_vel[1], robot_final_vel[0]) if np.linalg.norm(robot_final_vel) > 1e-5 else 0.0
+        
+        T = transformation_matrix([robot_final_pos[0], robot_final_pos[1], robot_final_pos[2], yaw_final])
         p1_t = np.matmul(T, p1)
         p2_t = np.matmul(T, p2)
         p3_t = np.matmul(T, p3)
         p4_t = np.matmul(T, p4)
 
-        ax.plot([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], 'k-', linewidth=1.5)
-        ax.plot([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], 'k-', linewidth=1.5)
+        ax.plot([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], 'k-', linewidth=1.5, zorder=10)
+        ax.plot([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], 'k-', linewidth=1.5, zorder=10)
+        ax.scatter([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], s=50, c='b', marker='o', zorder=10)
+        ax.scatter([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], s=50, c='r', marker='o', zorder=10)
 
-        ax.scatter([p1_t[0], p2_t[0]], [p1_t[1], p2_t[1]], s=50, c='b', marker='o')
-        ax.scatter([p3_t[0], p4_t[0]], [p3_t[1], p4_t[1]], s=50, c='r', marker='o')
-
-
-        # Plot path
-        plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
-
-        #Plot corridor
-        # if iter < len(corridors_data):
-        corridor = corridors_data[iter]
-        A = corridor.get('A')
-        b = corridor.get('b')
-        plot_convex_polygon(ax, A, b, robot_color)
+        # 4. Plot final corridor
+        if iter_final < len(corridors_data):
+            corridor = corridors_data[iter_final]
+            A = corridor.get('A')
+            b = corridor.get('b')
+            # Gọi hàm plot_convex_polygon đã sửa của bạn
+            plot_convex_polygon(ax, A, b, robot_color)
         
+        # 5. Plot final trajectory reference
+        if METHOD == 1 and traj_refs is not None and len(traj_refs) > 0:
+            traj_ref = traj_refs[iter_final]
+            ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Final Traj Ref")
 
-        # Plot FOV
-        robot_current_state = [path[iter, 1:][0],path[iter, 1:][1],VIEWING_RADIUS,path[iter, 1:][3],path[iter, 1:][4]]
-        fov_corners,_,_,_ = calculate_fov_corners(robot_current_state, HFOV, VFOV,prev_yaw=0.0)
-        if fov_corners is not None:
-            ax.fill(fov_corners[:, 0], fov_corners[:, 1], alpha=0.15, fc=robot_color, ec='none')
-            ax.plot(fov_corners[:, 0], fov_corners[:, 1], linestyle='--', color=robot_color, linewidth=1)
-
-        # Plot trajectory reference
-        if METHOD == 1:
-            if traj_refs is not None and len(traj_refs) > 0:
-                traj_ref = traj_refs[iter]
-                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
-
-
-    # ax.legend()
     ax.grid(True)
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
@@ -196,19 +201,9 @@ for iter in range(length):
     ax.set_ylim(YLIM)
     plt.tight_layout()
 
-    plt.gcf().canvas.mpl_connect('key_release_event',
-                                    lambda event:
-                                    [exit(0) if event.key == 'escape' else None])
     if export:
-        file_name = "results/data.png"
-        plt.savefig(file_name)
-        img = cv2.imread(file_name)
-        image_array.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-
-    plt.pause(0.001)
-
-if export:
-    import imageio
-    imageio.mimsave(SAVE_GIF, image_array)
+        file_name = "results/final_figure.png"
+        plt.savefig(file_name, dpi=300)
+        print(f"Final figure saved to {file_name}")
 
 plt.show()
