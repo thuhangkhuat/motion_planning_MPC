@@ -361,7 +361,7 @@ class Robot:
         if obstacle_points.shape[0] < 1: 
             return [], []
 
-        box = np.array([[VIEWING_RADIUS +20, VIEWING_RADIUS +20]])
+        box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
 
         try:
             list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, path_ref[0:2], box)

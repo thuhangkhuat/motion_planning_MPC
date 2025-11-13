@@ -12,7 +12,7 @@ MAX_ITER = 5000
 # Parameters for uav
 TIMESTEP = 0.1
 ROBOT_RADIUS = 0.3
-SENSING_RADIUS = 50.0
+SENSING_RADIUS = 100.0
 SENSING_NEIGHBOR = 30.0 
 EPSILON = 0.1
 D_FRAC = 0.0
@@ -29,7 +29,7 @@ SAFETY_MARGIN = 4
 
 METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
 
-SCENARIO = 2
+SCENARIO = 3
 if SCENARIO == 1:
     #Parameters of target
     TAR_MAX_SPEED = 6.5
@@ -220,7 +220,7 @@ elif SCENARIO == 3:
     TAR_MAX_SPEED = 8
     # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([120.0, 120.0,0]), np.array([160.0, 42.0,0])]
     # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([450.0, 150.0,0])]
+    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([145.0, 465.0,0]),  np.array([450.0, 150.0,0])]
 
     TAR_EPSILON = 0.1
 
@@ -286,7 +286,7 @@ elif SCENARIO == 3:
 
     # RECTANGLE_OBSTACLES = [
     #                     #  [50, 50, 30,30], 
-    #                      [70, 120,20, 50],
+    #                      [70, 120,30, 50],
     #                      [200,230,30, 60],
     #                      [300,100,60, 40],
     #                      [170,80,50,30],
@@ -299,7 +299,7 @@ elif SCENARIO == 3:
     #                      [390,35,40,40]]
     RECTANGLE_OBSTACLES = [
                         #  [50, 50, 30,30], 
-                         [70, 120,60, 70],
+                         [70, 120,40, 70],
                          [200,230,50,80],
                          [300,100,80, 60],
                          [170,80,70,50],
