@@ -218,9 +218,9 @@ elif SCENARIO == 2:
 elif SCENARIO == 3:
     #Parameters of target
     TAR_MAX_SPEED = 8
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([120.0, 120.0,0]), np.array([160.0, 42.0,0])]
+    TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
     # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([145.0, 465.0,0]),  np.array([450.0, 150.0,0])]
+    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([145.0, 465.0,0]),  np.array([450.0, 150.0,0])]
 
     TAR_EPSILON = 0.1
 
@@ -245,9 +245,9 @@ elif SCENARIO == 3:
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[10, 10, 3.],
-                       [50, 10, 3.],
-                       [20, 50, 3.],])
+    STARTS = np.array([[208, 190, 3.],
+                       [248, 190, 3.],
+                       [203, 217, 3.],])
     # STARTS = np.array([[10, 10, 3.],])
     NUM_ROBOT = STARTS.shape[0]
     GOALS = STARTS + np.array([21., 0., 0.])

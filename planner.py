@@ -179,7 +179,7 @@ if __name__ == "__main__":
     data = lidar.senseObstacle(np.concatenate([pose, [0]]), robots)
     obstacle_points = lidar.getObstaclePoints(data, pose)
     rrt  = RRT()
-    success, raw_path,_ = rrt.planning(pose, goal, obstacle_points)
+    success, raw_path,_ = rrt.find_path(obstacle_points, ROBOT_RADIUS)
     count, smoothed_path = RRT.remove_residual_node(raw_path, pose, goal, obstacle_points, ROBOT_RADIUS)
     print(time.time()-st)
     if success:

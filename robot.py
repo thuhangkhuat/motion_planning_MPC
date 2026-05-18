@@ -195,6 +195,9 @@ class Robot:
         _, raw_path, _ = self.planner.find_path(obstacle_points, ROBOT_RADIUS)
 
         _,traj_ref = RRT.remove_residual_node(raw_path, current_robot_pos, current_goal_pos, obstacle_points, ROBOT_RADIUS)
+        if (len(raw_path) == 0):
+            print("not found path")
+            print(traj_ref)
         return np.array(traj_ref)
 
     def costFunction(self, opt_states, opt_controls, traj_ref,scan_data,slack_vars, neighbors):
@@ -360,7 +363,7 @@ class Robot:
         """
         if obstacle_points.shape[0] < 1: 
             return [], []
-
+        # print(path_ref)
         box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
 
         try:
