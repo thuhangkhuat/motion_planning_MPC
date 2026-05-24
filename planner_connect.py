@@ -10,13 +10,13 @@ from lidar_fixed import *
 # ============================================================
 # RRT-Connect parameters
 # ============================================================
-RRT_STEP_LENGTH = 1.0
+RRT_STEP_LENGTH = 0.3
 RRT_GOAL_SAMPLE_RATE = 0.05   # thấp hơn — bi-directional đã tự kéo về goal
 RRT_MAX_ITER = 1500
 
 # Bridge test sampling
 BRIDGE_SAMPLE_RATE = 0.25     # 25% sample dùng bridge test
-BRIDGE_LENGTH = 4.0           # khoảng cách giữa 2 endpoint của bridge
+BRIDGE_LENGTH = 1.0           # khoảng cách giữa 2 endpoint của bridge
 BRIDGE_POINT_RADIUS = None    # None -> dùng ROBOT_RADIUS + safety
 BRIDGE_MAX_TRIES = 8          # max thử bridge trước khi fallback uniform
 
@@ -400,8 +400,8 @@ if __name__ == "__main__":
     import time
 
     # Test pose/goal — bạn có thể đổi để thử nhiều case
-    pose = np.array([155.0, 260.0])
-    goal = np.array([305.0, 260.0])
+    pose = np.array([197.0, 273.0])
+    goal = np.array([300.0, 400.0])
 
     robots = [
         Robot(0, np.concatenate([[-2.5, 0., 5., 0, 0, 0]]), np.zeros(3)),

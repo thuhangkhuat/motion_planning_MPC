@@ -130,9 +130,9 @@ for iter in range(length):
     # ax.plot(target_trajectory[:iter, 0], target_trajectory[:iter, 1], 'r--', label="Target Path")
     ax.plot(target_trajectory[iter, 0], target_trajectory[iter, 1], 'rX', markersize=10, label="Target")
 
-    target_current_pos = target_trajectory[iter]
-    circle_x, circle_y = getCircle(target_current_pos[0], target_current_pos[1], VIEWING_RADIUS)
-    ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
+    # target_current_pos = target_trajectory[iter]
+    # circle_x, circle_y = getCircle(target_current_pos[0], target_current_pos[1], VIEWING_RADIUS)
+    # ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
 
     # Plot path
     for i in range(NUM_ROBOT):
@@ -162,7 +162,7 @@ for iter in range(length):
 
 
         # Plot path
-        plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i))
+        plt.plot(path[:iter,1], path[:iter,2], color=robot_color, label="Drone {}".format(i+1))
 
         #Plot corridor
         # if iter < len(corridors_data):
@@ -183,7 +183,7 @@ for iter in range(length):
         if METHOD == 1:
             if traj_refs is not None and len(traj_refs) > 0:
                 traj_ref = traj_refs[iter]
-                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Trajectory Reference")
+                ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--')
 
 
     # ax.legend()

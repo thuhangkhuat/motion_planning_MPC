@@ -10,7 +10,7 @@ from lidar_fixed import *
 # ============================================================
 # RRT-Connect parameters
 # ============================================================
-RRT_STEP_LENGTH = 1.0
+RRT_STEP_LENGTH = 0.1
 RRT_GOAL_SAMPLE_RATE = 0.05   # thấp hơn — bi-directional đã tự kéo về goal
 RRT_MAX_ITER = 1500
 
@@ -338,6 +338,122 @@ def remove_residual_node(path, obstacle_points, robot_radius):
 
 
 # ============================================================
+# Clearance-aware utilities
+# ------------------------------------------------------------
+# Tính min distance từ 1 đoạn thẳng (segment) đến các lidar points.
+# Dùng cho clearance shortcut: chọn shortcut KHÔNG sát obstacle.
+# ============================================================
+def _min_clearance_along_segment(p1, p2, obstacle_points):
+    """
+    Trả về khoảng cách min từ bất kỳ điểm nào trên segment p1-p2
+    đến đám điểm obstacle_points. Vectorized với numpy.
+
+    Args:
+        p1, p2: tuple (x, y) hoặc list 2-element
+        obstacle_points: np.ndarray shape (N, 2)
+
+    Returns:
+        float: min distance (np.inf nếu không có obstacle points)
+    """
+    if obstacle_points is None or len(obstacle_points) == 0:
+        return np.inf
+
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    seg_vec = p2 - p1
+    seg_len_sq = float(np.dot(seg_vec, seg_vec))
+
+    if seg_len_sq < 1e-12:
+        # segment thoái hóa thành 1 điểm
+        d = obstacle_points - p1
+        return float(np.min(np.hypot(d[:, 0], d[:, 1])))
+
+    # Với mỗi obstacle point, tính t = projection onto segment (chuẩn hóa [0,1])
+    # closest_point_on_segment = p1 + clamp(t, 0, 1) * seg_vec
+    rel = obstacle_points - p1                # (N, 2)
+    t = (rel @ seg_vec) / seg_len_sq          # (N,)
+    t = np.clip(t, 0.0, 1.0)
+    closest = p1 + t[:, None] * seg_vec       # (N, 2)
+    diffs = obstacle_points - closest         # (N, 2)
+    dists = np.hypot(diffs[:, 0], diffs[:, 1])
+    return float(np.min(dists))
+
+
+def remove_residual_node_clearance(path, obstacle_points, robot_radius,
+                                    required_clearance=2.0,
+                                    fallback_to_basic=True):
+    """
+    Clearance-aware shortcut.
+
+    Chọn waypoint xa nhất thỏa MÃN ĐỒNG THỜI:
+      (a) Collision-free (như remove_residual_node cũ)
+      (b) Min clearance từ segment tới obstacle_points >= required_clearance
+
+    Nếu không tìm được j thỏa (b) thì:
+      - fallback_to_basic=True: dùng shortcut cũ (chấp nhận bám obstacle còn hơn
+        không shortcut)
+      - fallback_to_basic=False: chỉ tiến 1 bước (i -> i+1), KHÔNG shortcut
+        cho đoạn này (giữ nhiều waypoint hơn ở vùng hẹp)
+
+    Args:
+        path: list các [x, y]
+        obstacle_points: np.ndarray (N, 2) — lidar hits
+        robot_radius: float
+        required_clearance: float — khoảng cách tối thiểu MUỐN giữ với obstacle
+                            (TÍNH TỪ TÂM ROBOT, không cộng radius vì lidar
+                            cũng là điểm)
+        fallback_to_basic: True/False — xử lý khi không có shortcut nào đủ
+                            clearance
+
+    Returns:
+        list các [x, y]: path đã smooth
+    """
+    if path is None or len(path) < 2:
+        return path
+
+    smoothed = [path[0]]
+    i, n = 0, len(path)
+
+    while i < n - 1:
+        j_best_clearance = None       # candidate thỏa CẢ collision + clearance
+        j_best_collision = None       # candidate chỉ thỏa collision (fallback)
+
+        # Quét từ xa về gần để greedy chọn shortcut dài nhất
+        for j in range(n - 1, i, -1):
+            collision = RRTConnect._collides(
+                Node(smoothed[-1]), Node(path[j]),
+                obstacle_points, robot_radius,
+                ignore_start=(len(smoothed) == 1))
+            if collision:
+                continue
+
+            # Đoạn này không collision -> kiểm tra clearance
+            clearance = _min_clearance_along_segment(
+                smoothed[-1], path[j], obstacle_points)
+
+            if clearance >= required_clearance:
+                j_best_clearance = j
+                break  # đã tìm được candidate xa nhất + đủ clearance
+
+            # Lưu fallback (xa nhất chỉ thỏa collision-free)
+            if j_best_collision is None:
+                j_best_collision = j
+
+        # Quyết định j_best dựa trên kết quả
+        if j_best_clearance is not None:
+            j_best = j_best_clearance
+        elif fallback_to_basic and j_best_collision is not None:
+            j_best = j_best_collision    # bám obstacle còn hơn không tiến
+        else:
+            j_best = i + 1               # tiến 1 bước, giữ waypoint gốc
+
+        smoothed.append(path[j_best])
+        i = j_best
+
+    return smoothed
+
+
+# ============================================================
 # Cubic spline smoothing (cho MPC tracking)
 # ============================================================
 def _path_to_arclength(path_arr):
@@ -529,8 +645,8 @@ if __name__ == "__main__":
     import time
 
     # Test pose/goal — bạn có thể đổi để thử nhiều case
-    pose = np.array([155.0, 260.0])
-    goal = np.array([305.0, 260.0])
+    pose = np.array([197.0, 273.0])
+    goal = np.array([300.0, 400.0])
 
     robots = [
         Robot(0, np.concatenate([[-2.5, 0., 5., 0, 0, 0]]), np.zeros(3)),
@@ -555,10 +671,12 @@ if __name__ == "__main__":
         obstacle_points, ROBOT_RADIUS, max_iter=RRT_MAX_ITER)
     smoothed_path = (remove_residual_node(raw_path, obstacle_points, ROBOT_RADIUS)
                      if success else [])
-    # Spline path cho MPC tracking
-    spline_path = (smooth_path_spline(smoothed_path, obstacle_points,
-                                      ROBOT_RADIUS, density=2.0)
-                   if success else [])
+    # Clearance-aware variant để so sánh (tránh wall-hugging)
+    REQUIRED_CLEARANCE = 3.0   # tune theo benchmark
+    clearance_path = (remove_residual_node_clearance(
+                        raw_path, obstacle_points, ROBOT_RADIUS,
+                        required_clearance=REQUIRED_CLEARANCE)
+                     if success else [])
     t_plan = time.time() - st
 
     print(f"Lidar scan : {t_lidar*1000:.2f} ms ({len(obstacle_points)} hits)")
@@ -568,12 +686,9 @@ if __name__ == "__main__":
     print(f"Bridges    : {len(planner.bridge_samples)} narrow-passage samples")
     print(f"Success    : {success}")
     if success:
-        print(f"Raw path   : {len(raw_path)} pts")
-        print(f"Smoothed   : {len(smoothed_path)} pts (shortcut)")
-        if isinstance(spline_path, np.ndarray):
-            print(f"Spline     : {len(spline_path)} pts (cubic, arc-length)")
-        else:
-            print(f"Spline     : fallback (spline rejected do collision)")
+        print(f"Raw path        : {len(raw_path)} pts")
+        print(f"Basic shortcut  : {len(smoothed_path)} pts")
+        print(f"Clearance shortcut ({REQUIRED_CLEARANCE}m): {len(clearance_path)} pts")
 
     # Plot
     fig, ax = plt.subplots(figsize=(11, 11))
@@ -592,8 +707,8 @@ if __name__ == "__main__":
     ys_ref = [pose[1] - visible_r, pose[1] + visible_r, goal[1]]
     mx = (max(xs_ref) - min(xs_ref)) * 0.1
     my = (max(ys_ref) - min(ys_ref)) * 0.1
-    ax.set_xlim(min(xs_ref) - 200, max(xs_ref) + 200)
-    ax.set_ylim(min(ys_ref) - 200, max(ys_ref) + 200)
+    ax.set_xlim(min(xs_ref) - mx, max(xs_ref) + mx)
+    ax.set_ylim(min(ys_ref) - my, max(ys_ref) + my)
 
     draw_obstacles(ax, sensor_center=pose, sensing_radius=SENSING_RADIUS)
     draw_sensing_radius(ax, pose, SENSING_RADIUS)
@@ -628,16 +743,6 @@ if __name__ == "__main__":
         py = [p[1] for p in smoothed_path]
         ax.plot(px, py, '-', color='green', linewidth=2.5,
                 label='Smoothed (shortcut)', zorder=6)
-
-    # Spline path — đường mượt cuối cùng cho MPC
-    if isinstance(spline_path, np.ndarray) and len(spline_path) > 0:
-        ax.plot(spline_path[:, 0], spline_path[:, 1],
-                '-', color='deepskyblue', linewidth=2.0,
-                label=f'Spline ({len(spline_path)} pts)', zorder=7)
-        # vẽ luôn các điểm sample của spline (nhỏ) để thấy mật độ
-        ax.scatter(spline_path[:, 0], spline_path[:, 1],
-                   s=8, c='deepskyblue', edgecolors='navy',
-                   linewidths=0.3, zorder=7)
 
     ax.plot(pose[0], pose[1], 'o', color='lime', markersize=14,
             markeredgecolor='black', label='Start', zorder=7)

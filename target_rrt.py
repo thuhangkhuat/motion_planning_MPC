@@ -223,14 +223,14 @@ class TargetTrajectoryGenerator:
         while self.path_index < len(self.path) - 1:
             dist_to_move = self.max_speed * dt
             while dist_to_move > 0 and self.path_index < len(self.path) - 1:
-                target_waypoint = np.array(self.path[self.path_index + 1])
+                target_waypoint = np.array(self.path[self.path_index + 1],dtype=float)
                 vector_to_target = target_waypoint - self.current_pos
                 dist_to_waypoint = np.linalg.norm(vector_to_target)
                 if dist_to_waypoint == 0:
                     self.path_index += 1
                     continue
                 if dist_to_move >= dist_to_waypoint:
-                    self.current_pos = target_waypoint
+                    self.current_pos = target_waypoint.astype(float)
                     dist_to_move -= dist_to_waypoint
                     self.path_index += 1
                 else:
@@ -240,12 +240,6 @@ class TargetTrajectoryGenerator:
             yield list(self.current_pos)
 
 def main():
-    # sequential_planner = SequentialRRTPlanner(TAR_WAYPOINTS)
-
-
-    # time_step = 0.1 
-    # traj_gen = TargetTrajectoryGenerator(path=sequential_planner, max_speed=TAR_MAX_SPEED)
-    # trajectory_points = list(traj_gen.generate(dt=time_step))
 
     fig, ax = plt.subplots(figsize=(10, 10))
     # waypoints = [tuple(wp) for wp in TAR_WAYPOINTS]
@@ -254,20 +248,6 @@ def main():
         ax.add_patch(Rectangle((rect[0], rect[1]), rect[2], rect[3], facecolor='gray', edgecolor='black'))
     for circ in OBSTACLES:
         ax.add_patch(Circle((circ[0], circ[1]), circ[2], facecolor='gray', edgecolor='black'))
-
-    # path_x = [p[0] for p in sequential_planner]
-    # path_y = [p[1] for p in sequential_planner]
-    # ax.plot(path_x, path_y, 'b-o', linewidth=2, markersize=5, label='RRT Full Path')
-
-    # traj_x = [p[0] for p in trajectory_points]
-    # traj_y = [p[1] for p in trajectory_points]
-    # ax.plot(traj_x, traj_y, 'r--x', linewidth=1.5, markersize=4, label=f'Target Trajectory (Speed={TAR_MAX_SPEED})')
-
-    # ax.plot(waypoints[0][0], waypoints[0][1], 'go', markersize=12, label='Start')
-    # for j in range(1, len(waypoints) - 1):
-    #     ax.plot(waypoints[j][0], waypoints[j][1], 'm^', markersize=10, label=f'Waypoint {j}')
-    # if len(waypoints) > 1:
-    #     ax.plot(waypoints[-1][0], waypoints[-1][1], 'r*', markersize=15, label='Final Goal')
 
     ax.set_title("Sequential RRT Planning")
     ax.set_xlim(XLIM)

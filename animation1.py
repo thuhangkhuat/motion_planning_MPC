@@ -124,14 +124,14 @@ for iter_final in [length - 1]:
         ax.plot(np.append(poly[:, 0], poly[0,0]), np.append(poly[:, 1], poly[0,1]), 'k-', linewidth=1.5)
 
     # Plot ENTIRE target trajectory
-    ax.plot(target_trajectory[:, 0], target_trajectory[:, 1], 'r--', label="Target Path")
+    # ax.plot(target_trajectory[:, 0], target_trajectory[:, 1], 'r--', label="Target Path")
     # Plot final position of the target
     ax.plot(target_trajectory[iter_final, 0], target_trajectory[iter_final, 1], 'rX', markersize=10, label="Target Final Position")
 
     # Plot viewing radius around the target's final position
-    target_final_pos = target_trajectory[iter_final]
-    circle_x, circle_y = getCircle(target_final_pos[0], target_final_pos[1], VIEWING_RADIUS)
-    ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
+    # target_final_pos = target_trajectory[iter_final]
+    # circle_x, circle_y = getCircle(target_final_pos[0], target_final_pos[1], VIEWING_RADIUS)
+    # ax.plot(circle_x, circle_y, linestyle=':', color='green', linewidth=1.5, label=f"Viewing Radius")
 
     # Plot each robot's data
     for i in range(NUM_ROBOT):
@@ -188,9 +188,9 @@ for iter_final in [length - 1]:
             plot_convex_polygon(ax, A, b, robot_color)
         
         # 5. Plot final trajectory reference
-        if METHOD == 1 and traj_refs is not None and len(traj_refs) > 0:
-            traj_ref = traj_refs[iter_final]
-            ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Final Traj Ref")
+        # if METHOD == 1 and traj_refs is not None and len(traj_refs) > 0:
+        #     traj_ref = traj_refs[iter_final]
+        #     ax.plot(traj_ref[:, 0], traj_ref[:, 1], color=robot_color, linestyle='--', label=f"Drone {i} Final Traj Ref")
 
     ax.grid(True)
     ax.set_xlabel('x [m]')
