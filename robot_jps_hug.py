@@ -3,10 +3,11 @@ import casadi as ca
 
 import pydecomp as pdc
 
-from motion_planning_MPC.lidar import LidarScanner
+from lidar import LidarScanner
 from utils import *
-from planner_connect1 import RRTConnect, remove_residual_node   # <-- thay vì from planner import RRT
-from motion_planning_MPC.kalman_target import KalmanTargetTracker
+from planner_jps import JPSPlanner
+from planner_astar import remove_residual_node   # <-- thay vì from planner import RRT
+from kalman_target import KalmanTargetTracker
 
 from config import *
 
@@ -22,26 +23,38 @@ import matplotlib.pyplot as plt
 # ============================================================
 
 # Phase: SEARCH cost weights
-W_search_track = 1.0          # kéo UAV về predicted target
+W_search_track = 2.0          # kéo UAV về predicted target
 
 # Phase: TRACK cost weights (satellites)
-W_sat_distance = 0.5          # giữ khoảng cách r_d tới leader
-W_sat_angle = 2.0             # góc giữa các satellite
-W_sat_spread = 0.05           # break symmetry, kéo satellites tản ra
+W_sat_distance = 1.5          # giữ khoảng cách r_d tới target
+W_sat_angle = 1.0             # góc giữa các satellite (slot-based)
+W_sat_spread = 1.0            # break symmetry, kéo satellites tản ra
+
+# Satellite angle cost: SLOT DYNAMIC với ANCHOR-BASED reference
+# ------------------------------------------------------------
+# Logic:
+# 1. Compute angle hiện tại của mỗi satellite quanh leader
+# 2. Pick anchor = satellite có angle nhỏ nhất (với hysteresis)
+# 3. Compute slots: θ_s = θ_anchor + s * (2π/N_s) for s=0,1,...,N_s-1
+# 4. Sort satellites theo current angle, assign theo thứ tự
+# 5. Mỗi satellite biết slot của mình -> cost = (1 - cos(θ_actual - θ_slot))
+#
+# Anchor hysteresis: anchor chỉ đổi khi UAV khác có angle nhỏ hơn ≥ threshold
+ANCHOR_HYSTERESIS_RAD = 0.3   # ~17°, anchor không đổi nếu chênh < threshold
 
 # Phase: TRACK cost weights (leader)
 W_leader_slack = 1e3          # phạt slack visibility của leader
 
 # Common cost: collision avoidance (soft, áp mọi mode)
 # Bổ sung hard constraint d >= 2R: giữ margin an toàn d >= d_safe
-W_collision_avoid = 5.0       # weight cho safety preference
+W_collision_avoid = 1.0       # weight cho safety preference
 COLLISION_AVOID_DISTANCE = 3 * ROBOT_RADIUS   # = 0.9m cho scenario 5
                               # 1.5x hard limit (2R)
                               # đủ margin cho prediction error
 
 # Satellite formation geometry
 # r_d = 0.5 * L (= 25% cạnh FOV đầy đủ = 25% * 2L)
-SAT_DISTANCE_RATIO = 0.5      # r_d / VIEWING_RADIUS = 0.5
+SAT_DISTANCE_RATIO = 1      # r_d / VIEWING_RADIUS = 0.5
 
 # Hysteresis parameters cho mode switch
 K_IN_THRESHOLD = 3            # cycles liên tiếp có UAV thấy target → TRACK
@@ -146,6 +159,12 @@ class Robot:
         # Satellite info (computed mỗi cycle khi TRACK)
         self.satellite_indices = []   # list các index satellites
         self.leader_state_pred = None # states_prediction của leader (cho cost)
+
+        # Anchor state cho slot dynamic (hysteresis)
+        # Anchor = satellite tham chiếu, slots tính từ anchor angle.
+        # Hysteresis tránh anchor flip-flop khi 2 UAV gần ngang nhau.
+        self.anchor_index = None      # index của anchor hiện tại
+        self.my_slot_angle = None     # slot angle của self (computed mỗi cycle)
 
         # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
         # Giải quyết: target di chuyển -> path "đuổi" target hiện tại sẽ
@@ -434,8 +453,7 @@ class Robot:
 
     # ============================================================
     # ------------------------------------------------------------
-    # RRT-Connect random -> mỗi cycle ra path khác homotopy class.
-    #         Path commit chống flip-flop.
+    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
     #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
     #         -> bám tường, không tiến được
     #
@@ -447,10 +465,9 @@ class Robot:
     #   (D) Đã dùng path cũ quá N cycles (force refresh)
     # ============================================================
     # ============================================================
-    # RRT-Connect with PATH COMMIT
+    # JPS with PATH COMMIT
     # ------------------------------------------------------------
-    # RRT-Connect random -> mỗi cycle ra path khác homotopy class.
-    #         Path commit chống flip-flop.
+    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
     #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
     #         -> bám tường, không tiến được
     #
@@ -509,7 +526,7 @@ class Robot:
         # ─── Replan nếu cần ───
         if need_replan:
             # print(f"[Robot {self.index}] Replan: {reason}")
-            self.planner = RRTConnect()
+            self.planner = JPSPlanner()
             self.planner.initialize(tuple(current_robot_pos),
                                     tuple(current_goal_pos))
             success, raw_path, _, _, _ = self.planner.plan(
@@ -527,7 +544,7 @@ class Robot:
 
             # Plan fail
             self.planner_fail_count += 1
-            print(f"[Robot {self.index}] RRT failed "
+            print(f"[Robot {self.index}] JPS failed "
                   f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
             # Vẫn thử dùng committed_path nếu nó còn valid
             if self._committed_path is not None:
@@ -594,12 +611,14 @@ class Robot:
         return self._is_path_valid(path, obstacle_points)
 
     # ============================================================
-    # Cost function (2-PHASE FORMATION DESIGN)
+    # Cost function (2-PHASE FORMATION DESIGN, TARGET-CENTERED)
     # ------------------------------------------------------------
     # Dispatch theo mode + role:
     #   SEARCH:   J_search = w_t * tracking target + common
     #   TRACK Leader:   J_leader = w_cbf * slack + common
+    #                   (leader tự do, KHÔNG có slot, chỉ CBF)
     #   TRACK Satellite: J_sat = distance + angle + spread + common
+    #                   (distance/angle relative to TARGET, không phải leader)
     # Common = control + corridor + path + collision_avoid
     # ============================================================
     def costFunction(self, opt_states, opt_controls, traj_ref, scan_data,
@@ -620,13 +639,13 @@ class Robot:
 
         # TRACK mode
         if self.is_leader_role:
-            # Leader: penalize CBF slack
+            # Leader: penalize CBF slack, KHÔNG có slot
             c_leader_slack = self.costLeaderSlack(slack_leader)
             return c_leader_slack + common
 
-        # Satellite
-        c_dist = self.costSatelliteDistance(opt_states)
-        c_angle = self.costSatelliteAngle(opt_states, robots)
+        # Satellite (target-centered)
+        c_dist = self.costSatelliteDistance(opt_states, target_pos)
+        c_angle = self.costSatelliteAngle(opt_states, robots, target_pos)
         c_spread = self.costSatelliteSpread(opt_states, robots)
         return c_dist + c_angle + c_spread + common
 
@@ -682,99 +701,128 @@ class Robot:
     # ============================================================
     # SATELLITE costs (chỉ áp khi self là satellite trong TRACK)
     # ============================================================
-    def costSatelliteDistance(self, opt_states):
+    def costSatelliteDistance(self, opt_states, target_pos):
         """
-        Quadratic well quanh r_d giữa satellite và leader.
+        TARGET-CENTERED distance cost: satellite cách TARGET khoảng r_d.
+        
+        Quadratic well quanh r_d.
         r_d = SAT_DISTANCE_RATIO * VIEWING_RADIUS = 0.5 * L
+        
+        Reference: target (KHÔNG phải leader).
+        Lý do: target ở tâm formation → stable khi target di chuyển.
         """
-        if self.leader_state_pred is None:
-            return 0.0
         r_d = SAT_DISTANCE_RATIO * VIEWING_RADIUS
         r_d_sq = r_d * r_d
+        tgt_xy = target_pos[0, :2]
         cost = 0
         for k in range(HORIZON_LENGTH + 1):
-            leader_pos = ca.reshape(ca.DM(self.leader_state_pred[k, :2]), 1, 2)
-            d_sq = ca.sumsqr(opt_states[k, :2] - leader_pos)
+            d_sq = ca.sumsqr(opt_states[k, :2] - tgt_xy.reshape(1, 2))
             cost += (d_sq - r_d_sq)**2
         return W_sat_distance * cost
 
-    def costSatelliteAngle(self, opt_states, robots):
+    def costSatelliteAngle(self, opt_states, robots, target_pos):
         """
-        Pairwise cosine cost: góc giữa các satellite (nhìn từ leader)
-        phải = 2π / N_s.
+        TARGET-CENTERED slot dynamic angle cost với anchor-based reference.
 
-        Với satellite j khác, dùng vị trí PREDICTED (states_prediction).
-        cos(φ_ij) = (r_i · r_j) / (||r_i|| * ||r_j||)
-        r_i = p_i - p_L (biến optimization)
-        r_j = predicted_p_j - predicted_p_L (constant)
+        Logic:
+        1. Tính angle hiện tại của mọi satellite quanh TARGET (t=0)
+        2. Pick anchor (satellite có angle nhỏ nhất, với hysteresis)
+        3. Slots: θ_s = θ_anchor + s * (2π/N_s) for s=0,1,...,N_s-1
+        4. Sort satellites theo current angle, assign theo thứ tự
+        5. Self biết slot của mình -> cost = (1 - cos(θ_actual - θ_slot))
+
+        Reference: TARGET (KHÔNG phải leader).
+        Lý do: target ở tâm → formation stable khi leader đổi hoặc target di chuyển.
         """
-        if self.leader_state_pred is None or len(self.satellite_indices) <= 1:
-            # Không có satellite khác hoặc không có leader -> không có cost
+        if len(self.satellite_indices) <= 1:
             return 0.0
 
-        # Số satellites
         N_s = len(self.satellite_indices)
-        delta_theta_star = 2.0 * np.pi / N_s
-        cos_target = float(np.cos(delta_theta_star))
+        delta_theta = 2.0 * np.pi / N_s
 
-        # Lookup states_prediction của các satellite khác
-        other_sats = []
+        # ─── Tính current angle của all satellites quanh TARGET ───
+        target_xy = self.goal[:2]   # target position hiện tại
+        sat_angles = {}
         for r in robots:
-            if r.index in self.satellite_indices and r.index != self.index:
-                other_sats.append(r.states_prediction)
+            if r.index in self.satellite_indices:
+                dx = r.state[0] - target_xy[0]
+                dy = r.state[1] - target_xy[1]
+                sat_angles[r.index] = float(np.arctan2(dy, dx))
 
-        if len(other_sats) == 0:
+        if self.index not in sat_angles:
             return 0.0
 
-        eps = 1e-3  # tránh div-by-zero khi UAV trùng leader
+        # ─── Pick anchor với hysteresis ───
+        candidate_anchor = min(sat_angles.keys(),
+                                key=lambda i: sat_angles[i])
+
+        if self.anchor_index is None or self.anchor_index not in sat_angles:
+            self.anchor_index = candidate_anchor
+        else:
+            angle_diff = sat_angles[self.anchor_index] - sat_angles[candidate_anchor]
+            angle_diff = angle_diff % (2 * np.pi)
+            if angle_diff > ANCHOR_HYSTERESIS_RAD:
+                self.anchor_index = candidate_anchor
+
+        theta_anchor = sat_angles[self.anchor_index]
+
+        # ─── Sort satellites theo current angle (relative to anchor) ───
+        def relative_angle(i):
+            return (sat_angles[i] - theta_anchor) % (2 * np.pi)
+
+        sorted_sats = sorted(self.satellite_indices, key=relative_angle)
+
+        # ─── Assign slot cho self ───
+        my_slot_idx = sorted_sats.index(self.index)
+        my_slot_angle = theta_anchor + my_slot_idx * delta_theta
+        self.my_slot_angle = my_slot_angle
+
+        e_x = float(np.cos(my_slot_angle))
+        e_y = float(np.sin(my_slot_angle))
+
+        # ─── Compute cost (target-centered) ───
+        # r_i = p_self - p_target
+        # cos(θ_actual - θ_slot) = (r_i · e_slot) / ||r_i||
+        eps = 1e-3
         cost = 0
+        tgt_xy_dm = ca.DM(target_xy)
         for k in range(HORIZON_LENGTH + 1):
-            leader_pos = ca.DM(self.leader_state_pred[k, :2])  # (2,)
-            r_i = opt_states[k, :2].T - leader_pos              # (2, 1) vector
-
-            r_i_norm_sq = ca.sumsqr(r_i)
-
-            for other_pred in other_sats:
-                other_pos = ca.DM(other_pred[k, :2])
-                r_j = other_pos - leader_pos                    # (2, 1)
-                r_j_norm_sq = float(ca.dot(r_j, r_j))
-
-                # cos = (r_i · r_j) / sqrt(||r_i||² * ||r_j||² + eps²)
-                dot_ij = ca.dot(r_i, r_j)
-                denom = ca.sqrt(r_i_norm_sq * r_j_norm_sq + eps * eps)
-                cos_phi = dot_ij / denom
-
-                cost += (cos_phi - cos_target)**2
+            r_i = opt_states[k, :2].T - tgt_xy_dm
+            r_i_norm = ca.sqrt(ca.sumsqr(r_i) + eps * eps)
+            dot = r_i[0] * e_x + r_i[1] * e_y
+            cos_theta = dot / r_i_norm
+            cost += (1 - cos_theta)
 
         return W_sat_angle * cost
 
     def costSatelliteSpread(self, opt_states, robots):
         """
-        Spread cost (negative) để break symmetry:
-        đẩy satellites tản ra (không cùng phía leader).
-
-        Weight nhỏ (W_sat_spread = 0.05) để không dominate.
+        Spread cost: pairwise distance giữa các satellites.
+        Negative weight -> minimize cost = maximize spread.
+        
+        Helps break symmetry, push satellites away from each other.
+        Weight nhỏ để không dominate distance/angle cost.
+        
+        Note: dùng pairwise distance trực tiếp (không qua leader/target),
+        đơn giản và hiệu quả cho việc tản satellites ra.
         """
-        if self.leader_state_pred is None or len(self.satellite_indices) <= 1:
+        if len(self.satellite_indices) <= 1:
             return 0.0
 
-        other_sats = []
+        other_sats_pred = []
         for r in robots:
             if r.index in self.satellite_indices and r.index != self.index:
-                other_sats.append(r.states_prediction)
+                other_sats_pred.append(r.states_prediction)
 
-        if len(other_sats) == 0:
+        if len(other_sats_pred) == 0:
             return 0.0
 
         cost = 0
         for k in range(HORIZON_LENGTH + 1):
-            leader_pos = ca.DM(self.leader_state_pred[k, :2])
-            r_i = opt_states[k, :2].T - leader_pos
-
-            for other_pred in other_sats:
-                other_pos = ca.DM(other_pred[k, :2])
-                r_j = other_pos - leader_pos
-                diff = r_i - r_j
+            my_pos = opt_states[k, :2]
+            for other_pred in other_sats_pred:
+                other_pos = ca.reshape(ca.DM(other_pred[k, :2]), 1, 2)
+                diff = my_pos - other_pos
                 cost += ca.sumsqr(diff)
 
         # Negative -> minimize cost = maximize spread
@@ -906,6 +954,15 @@ class Robot:
             self.satellite_indices = []
             self.leader_state_pred = None
             self.leader_current_pos = None
+
+        # DEBUG: print mode/leader status (chỉ in cho UAV index 0 để không spam)
+        if self.index == 0:
+            min_d = min(dist_to_target.values()) if dist_to_target else float('inf')
+            print(f"[t={self.time_stamp:.1f}] mode={self.mode}, "
+                  f"leader={self.leader_index}, "
+                  f"V_strict={len(V_strict)}, "
+                  f"min_d={min_d:.2f}, L={L_strict:.2f}, "
+                  f"c_in={self.c_in}, c_out={self.c_out}")
 
         return self.is_leader_role
 

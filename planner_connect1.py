@@ -641,7 +641,7 @@ def draw_lidar_rays(ax, center, obstacle_points, max_rays=200):
 # Main test
 # ============================================================
 if __name__ == "__main__":
-    from robot import Robot
+    from motion_planning_MPC.robot_rrt import Robot
     import time
 
     # Test pose/goal — bạn có thể đổi để thử nhiều case

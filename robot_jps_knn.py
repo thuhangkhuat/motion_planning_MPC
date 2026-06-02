@@ -3,10 +3,12 @@ import casadi as ca
 
 import pydecomp as pdc
 
-from motion_planning_MPC.lidar import LidarScanner
+from lidar import LidarScanner
 from utils import *
-from planner_connect1 import RRTConnect, remove_residual_node   # <-- thay vì from planner import RRT
-from motion_planning_MPC.kalman_target import KalmanTargetTracker
+from planner_jps import JPSPlanner
+from planner_astar import remove_residual_node   # <-- thay vì from planner import RRT
+from kalman_target import KalmanTargetTracker
+
 
 from config import *
 
@@ -26,8 +28,15 @@ W_search_track = 1.0          # kéo UAV về predicted target
 
 # Phase: TRACK cost weights (satellites)
 W_sat_distance = 0.5          # giữ khoảng cách r_d tới leader
-W_sat_angle = 2.0             # góc giữa các satellite
-W_sat_spread = 0.05           # break symmetry, kéo satellites tản ra
+W_sat_angle = 1.0             # góc giữa các satellite (kNN-based)
+W_sat_spread = 15.0            # break symmetry, kéo satellites tản ra
+                              # TĂNG từ 0.05 -> 1.0 để break cluster ban đầu
+
+# Satellite angle cost: k-nearest neighbors
+# Chỉ tính pairwise cosine với k satellites gần nhất (angle-based).
+# Giảm conflicting gradients, scale tốt với N_s lớn.
+# Bio-inspired: flocking algorithms (Reynolds 1987) dùng local neighbors.
+SAT_KNN = 2                  
 
 # Phase: TRACK cost weights (leader)
 W_leader_slack = 1e3          # phạt slack visibility của leader
@@ -434,8 +443,7 @@ class Robot:
 
     # ============================================================
     # ------------------------------------------------------------
-    # RRT-Connect random -> mỗi cycle ra path khác homotopy class.
-    #         Path commit chống flip-flop.
+    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
     #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
     #         -> bám tường, không tiến được
     #
@@ -447,10 +455,9 @@ class Robot:
     #   (D) Đã dùng path cũ quá N cycles (force refresh)
     # ============================================================
     # ============================================================
-    # RRT-Connect with PATH COMMIT
+    # JPS with PATH COMMIT
     # ------------------------------------------------------------
-    # RRT-Connect random -> mỗi cycle ra path khác homotopy class.
-    #         Path commit chống flip-flop.
+    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
     #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
     #         -> bám tường, không tiến được
     #
@@ -509,7 +516,7 @@ class Robot:
         # ─── Replan nếu cần ───
         if need_replan:
             # print(f"[Robot {self.index}] Replan: {reason}")
-            self.planner = RRTConnect()
+            self.planner = JPSPlanner()
             self.planner.initialize(tuple(current_robot_pos),
                                     tuple(current_goal_pos))
             success, raw_path, _, _, _ = self.planner.plan(
@@ -527,7 +534,7 @@ class Robot:
 
             # Plan fail
             self.planner_fail_count += 1
-            print(f"[Robot {self.index}] RRT failed "
+            print(f"[Robot {self.index}] JPS failed "
                   f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
             # Vẫn thử dùng committed_path nếu nó còn valid
             if self._committed_path is not None:
@@ -700,43 +707,79 @@ class Robot:
 
     def costSatelliteAngle(self, opt_states, robots):
         """
-        Pairwise cosine cost: góc giữa các satellite (nhìn từ leader)
-        phải = 2π / N_s.
+        kNN pairwise cosine cost: góc giữa self và k satellites gần nhất
+        (angle-based) phải = 2π / N_s.
 
-        Với satellite j khác, dùng vị trí PREDICTED (states_prediction).
+        kNN approach (k=SAT_KNN):
+        - Tính current angle của mọi satellite quanh leader
+        - Sort theo angle, lấy k satellite có angle gần self nhất (ring topology)
+        - Apply pairwise cosine cost chỉ với k neighbors này
+
+        Lợi ích:
+        - Reduce conflicting gradients (UAV xa không kéo về)
+        - Scale O(N_s * k) thay vì O(N_s²)
+        - Bio-inspired (flocking, Reynolds 1987)
+
+        Edge case: nếu N_s - 1 <= k, dùng all pairs (degenerate to pairwise).
+
         cos(φ_ij) = (r_i · r_j) / (||r_i|| * ||r_j||)
         r_i = p_i - p_L (biến optimization)
         r_j = predicted_p_j - predicted_p_L (constant)
         """
         if self.leader_state_pred is None or len(self.satellite_indices) <= 1:
-            # Không có satellite khác hoặc không có leader -> không có cost
             return 0.0
 
-        # Số satellites
         N_s = len(self.satellite_indices)
         delta_theta_star = 2.0 * np.pi / N_s
         cos_target = float(np.cos(delta_theta_star))
 
-        # Lookup states_prediction của các satellite khác
-        other_sats = []
+        # ─── kNN selection: chỉ giữ k neighbors gần nhất theo angle ───
+        # Tính angle hiện tại (state t=0) của mỗi satellite quanh leader
+        leader_pos_now = self.leader_current_pos
+        sat_angles = {}      # index -> angle around leader
+        sat_objects = {}     # index -> robot object
         for r in robots:
-            if r.index in self.satellite_indices and r.index != self.index:
-                other_sats.append(r.states_prediction)
+            if r.index in self.satellite_indices:
+                dx = r.state[0] - leader_pos_now[0]
+                dy = r.state[1] - leader_pos_now[1]
+                sat_angles[r.index] = float(np.arctan2(dy, dx))
+                sat_objects[r.index] = r
 
-        if len(other_sats) == 0:
+        # Self angle
+        if self.index not in sat_angles:
+            # Self không trong satellites (shouldn't happen, nhưng safe)
             return 0.0
+        my_angle = sat_angles[self.index]
 
-        eps = 1e-3  # tránh div-by-zero khi UAV trùng leader
+        # Compute angular distance từ self tới mọi satellite khác
+        # Angular distance = min(|Δθ|, 2π - |Δθ|)  (circular)
+        def angular_dist(a, b):
+            d = abs(a - b) % (2 * np.pi)
+            return min(d, 2 * np.pi - d)
+
+        other_sat_indices = [j for j in self.satellite_indices if j != self.index]
+
+        # Nếu N_s - 1 <= k: dùng all pairs (không cần kNN)
+        if len(other_sat_indices) <= SAT_KNN:
+            knn_indices = other_sat_indices
+        else:
+            # Sort theo angular distance từ self, lấy k nhỏ nhất
+            other_sat_indices.sort(
+                key=lambda j: angular_dist(my_angle, sat_angles[j]))
+            knn_indices = other_sat_indices[:SAT_KNN]
+
+        # ─── Compute cost với kNN ───
+        eps = 1e-3
         cost = 0
         for k in range(HORIZON_LENGTH + 1):
-            leader_pos = ca.DM(self.leader_state_pred[k, :2])  # (2,)
-            r_i = opt_states[k, :2].T - leader_pos              # (2, 1) vector
-
+            leader_pos = ca.DM(self.leader_state_pred[k, :2])
+            r_i = opt_states[k, :2].T - leader_pos
             r_i_norm_sq = ca.sumsqr(r_i)
 
-            for other_pred in other_sats:
+            for j_idx in knn_indices:
+                other_pred = sat_objects[j_idx].states_prediction
                 other_pos = ca.DM(other_pred[k, :2])
-                r_j = other_pos - leader_pos                    # (2, 1)
+                r_j = other_pos - leader_pos
                 r_j_norm_sq = float(ca.dot(r_j, r_j))
 
                 # cos = (r_i · r_j) / sqrt(||r_i||² * ||r_j||² + eps²)

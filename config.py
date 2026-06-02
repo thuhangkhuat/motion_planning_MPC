@@ -1,7 +1,6 @@
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-from formation import generate_circular_formation
 
 
 # RRT parameters for uav
@@ -27,7 +26,7 @@ TAR_MAX_ITER = 5000
 TAR_RADIUS = 0.2
 SAFETY_MARGIN = 0.4
 
-METHOD = 1  # 1 - our, 2 - mpc, 3 - apf
+METHOD = 2  # 1: A*, 2: JPS, 3: RRT
 
 SCENARIO = 5
 if SCENARIO == 1:
@@ -39,7 +38,6 @@ if SCENARIO == 1:
     # Parameters of the environment
     VIEWING_RADIUS = 30    # R_view: radius of the viewing area
     DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
-
 
     # Parameters of FOV
     HFOV = 90.0             # Horizontal field of view
@@ -299,54 +297,6 @@ elif SCENARIO == 3:
 
 elif SCENARIO == 4:
     #Parameters of target
-    TAR_MAX_SPEED = 0.8
-    # TAR_WAYPOINTS = [np.array([4, 6.5, 5.0]),np.array([10.0, 6.5, 5.0]),
-    #                  np.array([15.0, 5.0, 5.0]),np.array([18.0, 10.0, 5.0]),np.array([25.0, 5.0, 5.0])]
-    TAR_WAYPOINTS = [np.array([3.0, 5.0, 5.0]),np.array([38.0, 5.0, 5.0])]
-    TAR_EPSILON = 0.1
-
-    VIEWING_RADIUS = 2.5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
-    
-    # Parameters of FOV
-    HFOV = 60.0             # Horizontal field of view
-    VFOV = 80.0             # Vertical field of view
-    # Weights for MPC
-    W_tra = 10
-    W_gui = 1
-    W_u = 4e-1
-    W_slack = 1000.0
-    W_form_dist = 5.0
-    W_form_spread = 5.0
-    W_col = 0.0
-    W_corridor = 2.5
-
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5
-    STARTS = np.array([[1.5, 5, 3.],
-                       [1.5, 3, 3.],
-                       [1.5, 4, 3.],
-                    #    [0.5, 6, 3.],
-                    ])
-    # STARTS = np.array([[3., 6.5, 5.]])
-    GOALS = STARTS + np.array([21., 0., 0.])
-    NUM_ROBOT = STARTS.shape[0]
-    FORMATION_OFFSETS = generate_circular_formation(NUM_ROBOT, VIEWING_RADIUS-0.9, arc_angle_deg=180)
-    # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    np.array([[5.0, 6.0], [8.5, 6.5], [7.0, 8.0], [5.5, 8.5]]),
-    np.array([[11.0, 2.0], [13.0, 1.0], [13.0, 2.8], [11.0, 3.0]]),
-    np.array([[16.0, 9.0], [19.0, 8.5], [18.0, 7.8], [15.5, 7.5]]),
-    np.array([[22.0, 4.5], [24.0, 5.5], [24.0, 7.8], [21.5, 6.5]]),
-    np.array([[30.0, 2.5], [32.0, 3.5], [32.0, 5.8], [30.5, 5.5]]),
-    np.array([[32.0, 8.5], [34.0, 9.5], [33.0, 10.2], [31.5, 10.5]]),
-    ]
-    OBSTACLES = np.array([])
-    XLIM = [0, 42]
-    YLIM = [0, 12]
-
-elif SCENARIO == 5:
-    #Parameters of target
     TAR_MAX_SPEED = 2
     # TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
     # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
@@ -355,7 +305,7 @@ elif SCENARIO == 5:
     TAR_EPSILON = 0.1
 
     # Parameters of the environment
-    VIEWING_RADIUS = 3    # R_view: radius of the viewing area
+    VIEWING_RADIUS = 5    # R_view: radius of the viewing area
     DESIRED_SEPARATION = VIEWING_RADIUS*1.5   # desired distance between robots
 
 
@@ -378,11 +328,92 @@ elif SCENARIO == 5:
 
     # Weights for CBF
     DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[2.0, 1.9, 3.],
+    STARTS = np.array([[15.0, 30.0, 3.],
                        [4.0, 5.0, 3.],
                        [10.0, 5.0, 3.],
-                       [12.0, 2.0, 3.],
-                       [3.0, 14.0, 3.],
+                       [20.0, 16.0, 3.],
+                       [3.0, 20.0, 3.],
+                       ])
+    # STARTS = np.array([[10, 10, 3.],])
+    NUM_ROBOT = STARTS.shape[0]
+    GOALS = STARTS + np.array([21., 0., 0.])
+    
+     # Obstacle x, y, r
+    POLYGON_OBSTACLES = [
+    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
+    np.array([[7.0, 12.0], [10.0, 12.0], [10.0, 17.0], [7.0, 17.0]]),
+    np.array([[20.0,23.0], [23.0, 23.0], [23.0, 29.0], [20.0, 29.0]]),
+    np.array([[30.0,10.0], [36.0, 10.0], [36.0, 14.0], [30.0, 14.0]]),
+    np.array([[17.0,8.0], [22.0, 8.0], [22.0, 11.0], [17.0, 11.0]]),
+    np.array([[34.5,23.5], [40.5, 23.5], [40.5, 27.5], [34.5, 27.5]]),
+    np.array([[38.0,35.0], [42.0, 35.0], [42.0, 41.0], [38.0, 41.0]]),
+    np.array([[17.0,34.0], [22.0, 34.0], [22.0, 37.0], [17.0, 37.0]]),
+    np.array([[7.0,37.0], [10.0, 37.0], [10.0, 42.0], [7.0, 42.0]]),
+    np.array([[22.0,43.0], [25.0, 43.0], [25.0, 46.0], [22.0, 46.0]]),
+    np.array([[5.0,24.0], [9.0, 24.0], [9.0, 28.0], [5.0, 28.0]]),
+    np.array([[39.0,3.5], [43.0, 3.5], [43.0, 7.5], [39.0, 7.5]]),
+    ]
+  
+
+    RECTANGLE_OBSTACLES = [
+                        #  [50, 50, 30,30], 
+                         [7.0, 12.0,3.0, 5.0],
+                         [20.0,23.0,5.0,8.0],
+                         [30.0,10.0,8.0, 6.0],
+                         [17.0,8.0,7.0,5.0],
+                         [34.5,23.5, 9.0,7.0],
+                         [38.0,35.0,6.0,8.0],
+                         [17.0,34.0,7.0,5.0],
+                         [7.0,37.0,5.0,7.0],
+                         [22.0,43.0,5.0,5.0],
+                         [5.0,24.0,6.0,6.0],
+                         [39.0,3.5,6.0,6.0]
+                         ]
+    
+
+    # RECTANGLE_OBSTACLES = []
+    OBSTACLES = np.array([])
+    XLIM = [0, 50]
+    YLIM = [0, 50]
+
+elif SCENARIO == 5:
+    #Parameters of target
+    TAR_MAX_SPEED = 2
+    # TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
+    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
+    TAR_WAYPOINTS = [np.array([3, 10,0]),np.array([30.0, 30.0,0]), np.array([42, 46,0]),  np.array([45.0, 15.0,0])]
+
+    TAR_EPSILON = 0.1
+
+    # Parameters of the environment
+    VIEWING_RADIUS = 5    # R_view: radius of the viewing area
+    DESIRED_SEPARATION = VIEWING_RADIUS*1.5   # desired distance between robots
+
+
+    # Parameters of FOV
+    HFOV = 90.0             # Horizontal field of view
+    VFOV = 90.0             # Vertical field of view
+
+    # Weights for MPC
+    W_tra = 1.5
+    W_gui = 1
+    W_u = 0.4
+    W_slack = 0.1
+    W_form_dist = 0.1
+    W_form_spread = 0.1
+    W_col = 0.0
+    W_corridor = 1.0
+    DT_CBF_GAMMA_CORR = 0.3    # conservative cho corridor (safety)
+    W_centroid = 0.3            # vừa, cân bằng formation
+    W_corr_slack = 1e4          # rất cao - vi phạm = đụng obstacle
+
+    # Weights for CBF
+    DT_CBF_GAMMA = 0.5 
+    STARTS = np.array([[20.0, 20.0, 3.],
+                       [4.0, 5.0, 3.],
+                       [10.0, 5.0, 3.],
+                    #    [15.0, 16.0, 3.],
+                    #    [3.0, 14.0, 3.],
                        ])
     # STARTS = np.array([[10, 10, 3.],])
     NUM_ROBOT = STARTS.shape[0]
@@ -427,6 +458,6 @@ elif SCENARIO == 5:
     XLIM = [0, 50]
     YLIM = [0, 50]
 
-FILE_NAME = "data{}_scen{}_{}_astar.txt".format(METHOD, SCENARIO, NUM_ROBOT)
+FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 FILE_NAME1 = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)
