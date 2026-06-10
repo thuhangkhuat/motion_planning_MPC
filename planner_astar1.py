@@ -22,7 +22,7 @@ import matplotlib.patches as patches
 
 from config import *
 from utils import Node, is_collision
-from lidar_fixed import LidarScanner
+from motion_planning_MPC.lidar import LidarScanner
 
 
 # ============================================================

@@ -1,463 +1,270 @@
+import os
 import numpy as np
-import time
-import matplotlib.pyplot as plt
 
+# ============================================================
+# 1. COMMON PARAMETERS
+# ============================================================
 
-# RRT parameters for uav
+# ─── Simulation ───
+TIMESTEP = 0.1                 # chu kỳ điều khiển (s)
+HORIZON_LENGTH = 10            # số bước MPC horizon
+
+# ─── UAV physical ───
+ROBOT_RADIUS = 0.3             # bán kính UAV (m)
+VMAX = 5                       # tốc độ tối đa (m/s)
+UMAX = 20                      # gia tốc tối đa (m/s²)
+SENSING_RADIUS = 10.0          # tầm cảm biến lidar (m)
+SENSING_NEIGHBOR = 5.0         # tầm "thấy" UAV khác (m)
+D_FRAC = 0.0                   # hệ số drag trong dynamics
+
+# ─── Planner cho UAV ───
+METHOD = 2                     # 1: A*, 2: JPS, 3: RRT
+# RRT-Connect (chỉ dùng khi METHOD == 3)
 STEP_LENGTH = 0.1
 GOAL_SAMPLE_RATE = 0.01
 MAX_ITER = 5000
 
-# Parameters for uav
-TIMESTEP = 0.1
-ROBOT_RADIUS = 0.3
-SENSING_RADIUS = 10.0
-SENSING_NEIGHBOR = 5.0 
-EPSILON = 0.1
-D_FRAC = 0.0
-VMAX = 5
-UMAX = 20
-HORIZON_LENGTH = 10
-
-# RRT parameters for target
+# ─── RRT cho TARGET (sinh trajectory mục tiêu) ───
 TAR_STEP_LENGTH = 0.5
 TAR_GOAL_SAMPLE_RATE = 0.1
 TAR_MAX_ITER = 5000
-TAR_RADIUS = 0.2
-SAFETY_MARGIN = 0.4
+TAR_RADIUS = 0.2               # bán kính target
+SAFETY_MARGIN = 0.4            # khoảng đệm target - obstacle
+TAR_EPSILON = 0.1
 
-METHOD = 2  # 1: A*, 2: JPS, 3: RRT
+# ─── Target path smoothing ───
+TAR_SMOOTH_ENABLE = True       # bật/tắt làm mượt path target
+TAR_SMOOTH_METHOD = "spline"   # "chaikin": vạt góc | "spline": Catmull-Rom (mượt hơn)
+TAR_SMOOTH_ITERATIONS = 4      # số lần lặp Chaikin (chỉ dùng khi method="chaikin")
+TAR_SPLINE_DS = 0.4            # khoảng cách sample trên spline (m), nhỏ = mịn hơn
 
-SCENARIO = 5
-if SCENARIO == 1:
-    #Parameters of target
-    TAR_MAX_SPEED = 6.5
-    TAR_WAYPOINTS = [np.array([40.0, 50.0,0]),np.array([300.0, 300.0,0]), np.array([400.0, 80.0,0])]
-    TAR_EPSILON = 0.1
+# ─── MPC base weights (mọi mode) ───
+W_tra = 1                      # tracking reference path (planner output)
+W_gui = 1                      # guidance terminal cost
+W_u = 4e-1                     # control effort
+W_corridor = 1.0               # barrier cost trong safe corridor
+DT_CBF_GAMMA = 0.5             # CBF discrete gamma (visibility leader)
 
-    # Parameters of the environment
-    VIEWING_RADIUS = 30    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
+# ============================================================
+# 2-PHASE FORMATION PARAMETERS
+# (SEARCH: chưa UAV nào thấy target / TRACK: có leader + satellites)
+# ============================================================
 
-    # Parameters of FOV
-    HFOV = 90.0             # Horizontal field of view
-    VFOV = 90.0             # Vertical field of view
+# ─── Mode constants ───
+MODE_SEARCH = "SEARCH"
+MODE_TRACK = "TRACK"
 
-    # Weights for MPC
-    W_tra = 10
-    W_gui = 1
-    W_u = 4e-1
-    W_slack = 10.0
-    W_form_dist = 5.0
-    W_form_spread = 5.0
-    W_col = 0.0
-    W_corridor = 10
+# ─── SEARCH mode ───
+W_search_track = 1.0           # kéo UAV về predicted target
 
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[40, 40, 3.],
-                       [40, 30, 3.],
-                       [30, 40, 3.],])
-    NUM_ROBOT = STARTS.shape[0]
-    GOALS = STARTS + np.array([21., 0., 0.])
-    
-     # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
-    np.array([[100.0, 120.0], [130.0, 120.0], [130.0, 160], [100, 160]]),
-    np.array([[200,220], [230, 220], [230, 290], [220, 290]]),
-    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
-    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
-    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
-    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
-    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
-    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
-    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
-    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
-    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
-  
+# ─── TRACK mode: satellites (target-centered formation) ───
+W_sat_distance = 0.5           # giữ khoảng cách r_d tới TARGET
+W_sat_angle = 2.0              # slot angle quanh TARGET (cos-based)
+W_sat_spread = 1.0             # break symmetry, đẩy satellites tản ra
+SAT_DISTANCE_RATIO = 0.5       # r_d = ratio * VIEWING_RADIUS
 
-    
-    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
+# ─── TRACK mode: leader ───
+W_leader_slack = 1e3           # phạt slack CBF visibility
 
-    # OBSTACLES = np.array([[ 70.0, 20.5, 8],
-    #                       [ 70.0, 60.7, 8],
-    #                       [ 70.0, 90.0, 8],
-    #                       [ 90.0, 10.5, 8],
-    #                       [120.0, 30.7, 8],
-    #                       [120.0, 70.5, 8],
-    #                       [150.0, 10.5, 8],
-    #                       [150.0, 60.0, 8],
-    #                       [170.0, 90.0, 8],
-    #                       [190.0, 30.5, 8],
-    #                       [190.0, 60.5, 8]])
+# ─── Slot dynamic anchor-based ───
+ANCHOR_HYSTERESIS_RAD = 0.3    # ~17°: anchor chỉ đổi khi chênh > ngưỡng
 
-    RECTANGLE_OBSTACLES = [[50, 50, 30,30], 
-                         [100, 120,30, 40],
-                         [200,200,30, 70],
-                         [300,100,60, 40],
-                         [170,80,50,30],
-                         [345,235, 60,40],
-                         [380,350,40,60],
-                         [170,340,50,30],
-                         [70,370,30,50],
-                         [220,430,30,30],
-                         [50,240,40,40],
-                         [390,35,40,40]]
-    
+# ─── Collision avoidance (soft, mọi mode) ───
+W_collision_avoid = 5.0        # weight safety preference
+COLLISION_AVOID_DISTANCE = 3 * ROBOT_RADIUS   # d_safe = 0.9m (1.5x hard limit 2R)
 
-    # RECTANGLE_OBSTACLES = []
-    OBSTACLES = np.array([])
-    XLIM = [0, 500]
-    YLIM = [0, 500]
-elif SCENARIO == 2:
-    #Parameters of target
-    TAR_MAX_SPEED = 8
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([120.0, 120.0,0]), np.array([160.0, 42.0,0])]
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([450.0, 150.0,0])]
-
-    TAR_EPSILON = 0.1
-
-    # Parameters of the environment
-    VIEWING_RADIUS = 30    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS   # desired distance between robots
+# ─── Mode switch hysteresis (counter-based) ───
+K_IN_THRESHOLD = 3             # cycles liên tiếp thấy target → vào TRACK
+K_OUT_THRESHOLD = 10           # cycles liên tiếp mất target → về SEARCH
+K_HANDOFF_THRESHOLD = 5        # cycles để handoff leader
+VISIBILITY_MARGIN_RATIO = 0.1  # L_strict = L * (1 - ratio)
+HANDOFF_DISTANCE_RATIO = 0.5   # Δ_handoff = ratio * L
 
 
-    # Parameters of FOV
-    HFOV = 90.0             # Horizontal field of view
-    VFOV = 90.0             # Vertical field of view
+# ============================================================
+# 2. SCENARIOS 
+# ============================================================
 
-    # Weights for MPC
-    W_tra = 1
-    W_gui = 1
-    W_u = 4e-1
-    W_slack = 10.0
-    W_form_dist = 1.0
-    W_form_spread = 1.0
-    W_col = 0.0
-    W_corridor = 10
+#     SCENARIO=3 python main.py
+#     SCENARIO=3 python plot_scenario.py --traj
+SCENARIO = int(os.environ.get("SCENARIO", 1))
 
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[10, 10, 3.],
-                       [50, 10, 3.],
-                       [20, 50, 3.],])
-    # STARTS = np.array([[10, 10, 3.],])
-    NUM_ROBOT = STARTS.shape[0]
-    GOALS = STARTS + np.array([21., 0., 0.])
-    
-     # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
-    np.array([[70.0, 120.0], [100.0, 120.0], [100.0, 170], [70, 170]]),
-    np.array([[200,230], [230, 230], [230, 290], [200, 290]]),
-    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
-    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
-    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
-    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
-    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
-    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
-    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
-    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
-    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
-  
-    POLYGON_OBSTACLES = [poly * 1 for poly in POLYGON_OBSTACLES]
+SCENARIOS = {
 
-    
-    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
+    # ────────────────────────────────────────────────────────
+    # Scenario 1:
+    # ────────────────────────────────────────────────────────
+    1: dict(
+        tar_max_speed=8,
+        viewing_radius=30,
+        waypoints=[
+            np.array([16.0, 20.0, 0]),
+            np.array([300.0, 300.0, 0]),
+            np.array([145.0, 465.0, 0]),
+            np.array([450.0, 150.0, 0]),
+        ],
+        starts=np.array([
+            [20, 19, 3.],
+            [40, 50, 3.],
+            [0, 0, 3.],
+        ]),
+        rects=[
+            [70, 120, 40, 70],
+            [200, 230, 50, 80],
+            [300, 100, 80, 60],
+            [170, 80, 70, 50],
+            [345, 235, 90, 70],
+            [380, 350, 60, 80],
+            [170, 340, 70, 50],
+            [70, 370, 50, 70],
+            [220, 430, 50, 50],
+            [50, 240, 60, 60],
+            [390, 35, 60, 60],
+        ],
+        circles=[],
+        xlim=[0, 500],
+        ylim=[0, 500],
+    ),
 
-    # OBSTACLES = np.array([[ 70.0, 20.5, 8],
-    #                       [ 70.0, 60.7, 8],
-    #                       [ 70.0, 90.0, 8],
-    #                       [ 90.0, 10.5, 8],
-    #                       [120.0, 30.7, 8],
-    #                       [120.0, 70.5, 8],
-    #                       [150.0, 10.5, 8],
-    #                       [150.0, 60.0, 8],
-    #                       [170.0, 90.0, 8],
-    #                       [190.0, 30.5, 8],
-    #                       [190.0, 60.5, 8]])
+    # ────────────────────────────────────────────────────────
+    # Scenario 2:
+    # ────────────────────────────────────────────────────────
+    2: dict(
+        tar_max_speed=2,
+        viewing_radius=5,
+        waypoints=[
+            np.array([3, 10, 0]),
+            np.array([30.0, 30.0, 0]),
+            np.array([42, 46, 0]),
+            np.array([45.0, 15.0, 0]),
+        ],
+        starts=np.array([
+            [15.0, 30.0, 3.],
+            [4.0, 5.0, 3.],
+            [10.0, 5.0, 3.],
+            [20.0, 16.0, 3.],
+            [3.0, 20.0, 3.],
+        ]),
+        rects=[
+            [7.0, 12.0, 3.0, 5.0],
+            [20.0, 23.0, 5.0, 8.0],
+            [30.0, 10.0, 8.0, 6.0],
+            [17.0, 8.0, 7.0, 5.0],
+            [34.5, 23.5, 9.0, 7.0],
+            [38.0, 35.0, 6.0, 8.0],
+            [17.0, 34.0, 7.0, 5.0],
+            [7.0, 37.0, 5.0, 7.0],
+            [22.0, 43.0, 5.0, 5.0],
+            [5.0, 24.0, 6.0, 6.0],
+            [39.0, 3.5, 6.0, 6.0],
+        ],
+        circles=[],
+        xlim=[0, 50],
+        ylim=[0, 50],
+    ),
 
-    # RECTANGLE_OBSTACLES = [
-    #                     #  [50, 50, 30,30], 
-    #                      [70, 120,20, 50],
-    #                      [200,230,30, 60],
-    #                      [300,100,60, 40],
-    #                      [170,80,50,30],
-    #                      [345,235, 60,40],
-    #                      [380,350,40,60],
-    #                      [170,340,50,30],
-    #                      [70,370,30,50],
-    #                      [220,430,30,30],
-    #                      [50,240,40,40],
-    #                      [390,35,40,40]]
-    RECTANGLE_OBSTACLES = [
-                        #  [50, 50, 30,30], 
-                         [70, 120,60, 70],
-                         [200,230,50,80],
-                         [300,100,80, 60],
-                         [170,80,70,50],
-                         [345,235, 90,70],
-                         [380,350,60,80],
-                         [170,340,70,50],
-                         [70,370,50,70],
-                         [220,430,50,50],
-                         [50,240,60,60],
-                         [390,35,60,60]]
-    
-    RECTANGLE_OBSTACLES = [np.array(rect) * 1 for rect in RECTANGLE_OBSTACLES]
-    
+    # ────────────────────────────────────────────────────────
+    # Scenario 3:
+    # ────────────────────────────────────────────────────────
+    3: dict(
+        tar_max_speed=2,
+        viewing_radius=5,
+        waypoints=[
+            np.array([3, 10, 0]),
+            np.array([30.0, 30.0, 0]),
+            np.array([42, 46, 0]),
+            np.array([45.0, 15.0, 0]),
+        ],
+        starts=np.array([
+            [20.0, 20.0, 3.],
+            [4.0, 5.0, 3.],
+            [10.0, 5.0, 3.],
+        ]),
+        rects=[
+            [7.0, 12.0, 3.0, 5.0],
+            [20.0, 23.0, 5.0, 8.0],
+            [30.0, 10.0, 8.0, 6.0],
+            [17.0, 8.0, 7.0, 5.0],
+            [34.5, 23.5, 9.0, 7.0],
+            [38.0, 35.0, 6.0, 8.0],
+            [17.0, 34.0, 7.0, 5.0],
+            [7.0, 37.0, 5.0, 7.0],
+            [22.0, 43.0, 5.0, 5.0],
+            [5.0, 24.0, 6.0, 6.0],
+            [39.0, 3.5, 6.0, 6.0],
+        ],
+        circles=[],
+        xlim=[0, 50],
+        ylim=[0, 50],
+    ),
 
-    # RECTANGLE_OBSTACLES = []
-    OBSTACLES = np.array([])
-    XLIM = [0, 500]
-    YLIM = [0, 500]
-elif SCENARIO == 3:
-    #Parameters of target
-    TAR_MAX_SPEED = 8
-    # TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([300.0, 300.0,0]), np.array([145.0, 465.0,0]),  np.array([450.0, 150.0,0])]
-
-    TAR_EPSILON = 0.1
-
-    # Parameters of the environment
-    VIEWING_RADIUS = 30    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS*1.5   # desired distance between robots
-
-
-    # Parameters of FOV
-    HFOV = 90.0             # Horizontal field of view
-    VFOV = 90.0             # Vertical field of view
-
-    # Weights for MPC
-    W_tra = 1
-    W_gui = 1
-    W_u = 4e-1
-    W_slack = 0.1
-    W_form_dist = 0.1
-    W_form_spread = 0.1
-    W_col = 0.0
-    W_corridor = 1.0
-    DT_CBF_GAMMA_CORR = 0.3    # conservative cho corridor (safety)
-    W_centroid = 0.3            # vừa, cân bằng formation
-    W_corr_slack = 1e4          # rất cao - vi phạm = đụng obstacle
-
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[20, 19, 3.],
-                       [40, 50, 3.],
-                       [0, 0, 3.],])
-    # STARTS = np.array([[10, 10, 3.],])
-    NUM_ROBOT = STARTS.shape[0]
-    GOALS = STARTS + np.array([21., 0., 0.])
-    
-     # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
-    np.array([[70.0, 120.0], [100.0, 120.0], [100.0, 170], [70, 170]]),
-    np.array([[200,230], [230, 230], [230, 290], [200, 290]]),
-    np.array([[300,100], [360, 100], [360, 140], [300, 140]]),
-    np.array([[170,80], [220, 80], [220, 110], [170, 110]]),
-    np.array([[345,235], [405, 235], [405, 275], [345, 275]]),
-    np.array([[380,350], [420, 350], [420, 410], [380, 410]]),
-    np.array([[170,340], [220, 340], [220, 370], [170, 370]]),
-    np.array([[70,370], [100, 370], [100, 420], [70, 420]]),
-    np.array([[220,430], [250, 430], [250, 460], [220, 460]]),
-    np.array([[50,240], [90, 240], [90, 280], [50, 280]]),
-    np.array([[390,35], [430, 35], [430, 75], [390, 75]]),]
-  
-    POLYGON_OBSTACLES = [poly * 1 for poly in POLYGON_OBSTACLES]
-
-    
-    # RECTANGLE_OBSTACLES = [[10, 20, 20,20]] #x_min, y_min, width, height
-
-    RECTANGLE_OBSTACLES = [
-                        #  [50, 50, 30,30], 
-                         [70, 120,40, 70],
-                         [200,230,50,80],
-                         [300,100,80, 60],
-                         [170,80,70,50],
-                         [345,235, 90,70],
-                         [380,350,60,80],
-                         [170,340,70,50],
-                         [70,370,50,70],
-                         [220,430,50,50],
-                         [50,240,60,60],
-                         [390,35,60,60]]
-    
-    RECTANGLE_OBSTACLES = [np.array(rect) * 1 for rect in RECTANGLE_OBSTACLES]
-    
-
-    # RECTANGLE_OBSTACLES = []
-    OBSTACLES = np.array([])
-    XLIM = [0, 500]
-    YLIM = [0, 500]
-
-elif SCENARIO == 4:
-    #Parameters of target
-    TAR_MAX_SPEED = 2
-    # TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([3, 10,0]),np.array([30.0, 30.0,0]), np.array([42, 46,0]),  np.array([45.0, 15.0,0])]
-
-    TAR_EPSILON = 0.1
-
-    # Parameters of the environment
-    VIEWING_RADIUS = 5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS*1.5   # desired distance between robots
+    # ────────────────────────────────────────────────────────
+    # Scenario 4: TEMPLATE — copy đoạn này để tạo kịch bản mới
+    # ────────────────────────────────────────────────────────
+    # 4: dict(
+    #     tar_max_speed=2,
+    #     viewing_radius=5,
+    #     waypoints=[
+    #         np.array([x, y, 0]),
+    #         ...
+    #     ],
+    #     starts=np.array([
+    #         [x, y, 3.],
+    #         ...
+    #     ]),
+    #     rects=[[x, y, w, h], ...],      # chữ nhật / vuông
+    #     circles=[[cx, cy, r], ...],     # tròn
+    #     xlim=[0, 50],
+    #     ylim=[0, 50],
+    #     params=dict(                    # (optional) tune riêng scenario này
+    #         W_sat_angle=5.0,
+    #         W_collision_avoid=2.0,
+    #         K_OUT_THRESHOLD=15,
+    #     ),
+    # ),
+}
 
 
-    # Parameters of FOV
-    HFOV = 90.0             # Horizontal field of view
-    VFOV = 90.0             # Vertical field of view
+# ============================================================
+# 3. EXPORT
+# ============================================================
 
-    # Weights for MPC
-    W_tra = 1
-    W_gui = 1
-    W_u = 4e-1
-    W_slack = 0.1
-    W_form_dist = 0.1
-    W_form_spread = 0.1
-    W_col = 0.0
-    W_corridor = 1.0
-    DT_CBF_GAMMA_CORR = 0.3    # conservative cho corridor (safety)
-    W_centroid = 0.3            # vừa, cân bằng formation
-    W_corr_slack = 1e4          # rất cao - vi phạm = đụng obstacle
+if SCENARIO not in SCENARIOS:
+    raise ValueError(
+        f"SCENARIO = {SCENARIO} không tồn tại. "
+        f"Các scenario có sẵn: {sorted(SCENARIOS.keys())}")
 
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[15.0, 30.0, 3.],
-                       [4.0, 5.0, 3.],
-                       [10.0, 5.0, 3.],
-                       [20.0, 16.0, 3.],
-                       [3.0, 20.0, 3.],
-                       ])
-    # STARTS = np.array([[10, 10, 3.],])
-    NUM_ROBOT = STARTS.shape[0]
-    GOALS = STARTS + np.array([21., 0., 0.])
-    
-     # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
-    np.array([[7.0, 12.0], [10.0, 12.0], [10.0, 17.0], [7.0, 17.0]]),
-    np.array([[20.0,23.0], [23.0, 23.0], [23.0, 29.0], [20.0, 29.0]]),
-    np.array([[30.0,10.0], [36.0, 10.0], [36.0, 14.0], [30.0, 14.0]]),
-    np.array([[17.0,8.0], [22.0, 8.0], [22.0, 11.0], [17.0, 11.0]]),
-    np.array([[34.5,23.5], [40.5, 23.5], [40.5, 27.5], [34.5, 27.5]]),
-    np.array([[38.0,35.0], [42.0, 35.0], [42.0, 41.0], [38.0, 41.0]]),
-    np.array([[17.0,34.0], [22.0, 34.0], [22.0, 37.0], [17.0, 37.0]]),
-    np.array([[7.0,37.0], [10.0, 37.0], [10.0, 42.0], [7.0, 42.0]]),
-    np.array([[22.0,43.0], [25.0, 43.0], [25.0, 46.0], [22.0, 46.0]]),
-    np.array([[5.0,24.0], [9.0, 24.0], [9.0, 28.0], [5.0, 28.0]]),
-    np.array([[39.0,3.5], [43.0, 3.5], [43.0, 7.5], [39.0, 7.5]]),
-    ]
-  
+_s = SCENARIOS[SCENARIO]
 
-    RECTANGLE_OBSTACLES = [
-                        #  [50, 50, 30,30], 
-                         [7.0, 12.0,3.0, 5.0],
-                         [20.0,23.0,5.0,8.0],
-                         [30.0,10.0,8.0, 6.0],
-                         [17.0,8.0,7.0,5.0],
-                         [34.5,23.5, 9.0,7.0],
-                         [38.0,35.0,6.0,8.0],
-                         [17.0,34.0,7.0,5.0],
-                         [7.0,37.0,5.0,7.0],
-                         [22.0,43.0,5.0,5.0],
-                         [5.0,24.0,6.0,6.0],
-                         [39.0,3.5,6.0,6.0]
-                         ]
-    
+# ─── Per-scenario parameter overrides ───
+_overrides = _s.get('params', {})
+globals().update(_overrides)
 
-    # RECTANGLE_OBSTACLES = []
-    OBSTACLES = np.array([])
-    XLIM = [0, 50]
-    YLIM = [0, 50]
+# Target
+TAR_MAX_SPEED = _s['tar_max_speed']
+TAR_WAYPOINTS = _s['waypoints']
 
-elif SCENARIO == 5:
-    #Parameters of target
-    TAR_MAX_SPEED = 2
-    # TAR_WAYPOINTS = [np.array([214.0, 200.0,0]),np.array([300.0, 300.0,0])]
-    # TAR_WAYPOINTS = [np.array([16.0, 20.0,0]),np.array([200.0, 175.0,0]),np.array([300.0, 175.0,0]),np.array([300.0, 400.0,0]),np.array([145.0, 400.0,0])]
-    TAR_WAYPOINTS = [np.array([3, 10,0]),np.array([30.0, 30.0,0]), np.array([42, 46,0]),  np.array([45.0, 15.0,0])]
+# Environment
+VIEWING_RADIUS = _s['viewing_radius']
+XLIM = _s['xlim']
+YLIM = _s['ylim']
 
-    TAR_EPSILON = 0.1
+# UAV
+STARTS = _s['starts']
+NUM_ROBOT = STARTS.shape[0]
+GOALS = STARTS + np.array([21., 0., 0.])
 
-    # Parameters of the environment
-    VIEWING_RADIUS = 5    # R_view: radius of the viewing area
-    DESIRED_SEPARATION = VIEWING_RADIUS*1.5   # desired distance between robots
+RECTANGLE_OBSTACLES = [np.array(r, dtype=float) for r in _s['rects']]
 
+POLYGON_OBSTACLES = [
+    np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]])
+    for (x, y, w, h) in _s['rects']
+]
 
-    # Parameters of FOV
-    HFOV = 90.0             # Horizontal field of view
-    VFOV = 90.0             # Vertical field of view
+_circles = _s.get('circles', [])
+OBSTACLES = np.array(_circles, dtype=float) if _circles else np.array([])
 
-    # Weights for MPC
-    W_tra = 1.5
-    W_gui = 1
-    W_u = 0.4
-    W_slack = 0.1
-    W_form_dist = 0.1
-    W_form_spread = 0.1
-    W_col = 0.0
-    W_corridor = 1.0
-    DT_CBF_GAMMA_CORR = 0.3    # conservative cho corridor (safety)
-    W_centroid = 0.3            # vừa, cân bằng formation
-    W_corr_slack = 1e4          # rất cao - vi phạm = đụng obstacle
-
-    # Weights for CBF
-    DT_CBF_GAMMA = 0.5 
-    STARTS = np.array([[20.0, 20.0, 3.],
-                       [4.0, 5.0, 3.],
-                       [10.0, 5.0, 3.],
-                    #    [15.0, 16.0, 3.],
-                    #    [3.0, 14.0, 3.],
-                       ])
-    # STARTS = np.array([[10, 10, 3.],])
-    NUM_ROBOT = STARTS.shape[0]
-    GOALS = STARTS + np.array([21., 0., 0.])
-    
-     # Obstacle x, y, r
-    POLYGON_OBSTACLES = [
-    # np.array([[50.0, 50.0], [80.0, 50.0], [80.0, 80.0], [50.0, 80.0]]),
-    np.array([[7.0, 12.0], [10.0, 12.0], [10.0, 17.0], [7.0, 17.0]]),
-    np.array([[20.0,23.0], [23.0, 23.0], [23.0, 29.0], [20.0, 29.0]]),
-    np.array([[30.0,10.0], [36.0, 10.0], [36.0, 14.0], [30.0, 14.0]]),
-    np.array([[17.0,8.0], [22.0, 8.0], [22.0, 11.0], [17.0, 11.0]]),
-    np.array([[34.5,23.5], [40.5, 23.5], [40.5, 27.5], [34.5, 27.5]]),
-    np.array([[38.0,35.0], [42.0, 35.0], [42.0, 41.0], [38.0, 41.0]]),
-    np.array([[17.0,34.0], [22.0, 34.0], [22.0, 37.0], [17.0, 37.0]]),
-    np.array([[7.0,37.0], [10.0, 37.0], [10.0, 42.0], [7.0, 42.0]]),
-    np.array([[22.0,43.0], [25.0, 43.0], [25.0, 46.0], [22.0, 46.0]]),
-    np.array([[5.0,24.0], [9.0, 24.0], [9.0, 28.0], [5.0, 28.0]]),
-    np.array([[39.0,3.5], [43.0, 3.5], [43.0, 7.5], [39.0, 7.5]]),]
-  
-    POLYGON_OBSTACLES = [poly * 1 for poly in POLYGON_OBSTACLES]
-
-    RECTANGLE_OBSTACLES = [
-                        #  [50, 50, 30,30], 
-                         [7.0, 12.0,3.0, 5.0],
-                         [20.0,23.0,5.0,8.0],
-                         [30.0,10.0,8.0, 6.0],
-                         [17.0,8.0,7.0,5.0],
-                         [34.5,23.5, 9.0,7.0],
-                         [38.0,35.0,6.0,8.0],
-                         [17.0,34.0,7.0,5.0],
-                         [7.0,37.0,5.0,7.0],
-                         [22.0,43.0,5.0,5.0],
-                         [5.0,24.0,6.0,6.0],
-                         [39.0,3.5,6.0,6.0]]
-    
-    RECTANGLE_OBSTACLES = [np.array(rect) * 1 for rect in RECTANGLE_OBSTACLES]
-    
-
-    # RECTANGLE_OBSTACLES = []
-    OBSTACLES = np.array([])
-    XLIM = [0, 50]
-    YLIM = [0, 50]
-
+# Output files
 FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
-FILE_NAME1 = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
+FILE_NAME1 = FILE_NAME
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)

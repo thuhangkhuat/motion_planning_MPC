@@ -25,7 +25,9 @@ import numpy as np
 
 from config import (SCENARIO, TAR_MAX_SPEED, TIMESTEP,
                     TAR_STEP_LENGTH, TAR_GOAL_SAMPLE_RATE,
-                    TAR_MAX_ITER, SAFETY_MARGIN)
+                    TAR_MAX_ITER, SAFETY_MARGIN,
+                    TAR_SMOOTH_ENABLE, TAR_SMOOTH_METHOD,
+                    TAR_SMOOTH_ITERATIONS, TAR_SPLINE_DS)
 from target_rrt import SequentialRRTPlanner
 
 
@@ -40,10 +42,12 @@ def _make_cache_key(waypoints):
     h = hashlib.md5()
     for wp in waypoints:
         h.update(np.asarray(wp, dtype=np.float64).tobytes())
-    # Tham số ảnh hưởng tới trajectory
+    # Tham số ảnh hưởng tới trajectory (gồm cả smoothing)
     params = (SCENARIO, TAR_MAX_SPEED, TIMESTEP,
               TAR_STEP_LENGTH, TAR_GOAL_SAMPLE_RATE,
-              TAR_MAX_ITER, SAFETY_MARGIN)
+              TAR_MAX_ITER, SAFETY_MARGIN,
+              TAR_SMOOTH_ENABLE, TAR_SMOOTH_METHOD,
+              TAR_SMOOTH_ITERATIONS, TAR_SPLINE_DS)
     h.update(str(params).encode())
     return h.hexdigest()[:12]   # 12 ký tự đủ tránh collision
 

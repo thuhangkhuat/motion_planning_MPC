@@ -14,63 +14,6 @@ from config import *
 import matplotlib.pyplot as plt
 
 
-# ============================================================
-# DESIGN MỚI (2-PHASE FORMATION) - tham số
-# ------------------------------------------------------------
-# Phase SEARCH: tất cả UAV homogeneous, chase target
-# Phase TRACK: 1 leader (CBF FOV), satellites bố trí quanh leader
-# Transition: counter-based hysteresis
-# ============================================================
-
-# Phase: SEARCH cost weights
-W_search_track = 2.0          # kéo UAV về predicted target
-
-# Phase: TRACK cost weights (satellites)
-W_sat_distance = 1.5          # giữ khoảng cách r_d tới target
-W_sat_angle = 1.0             # góc giữa các satellite (slot-based)
-W_sat_spread = 1.0            # break symmetry, kéo satellites tản ra
-
-# Satellite angle cost: SLOT DYNAMIC với ANCHOR-BASED reference
-# ------------------------------------------------------------
-# Logic:
-# 1. Compute angle hiện tại của mỗi satellite quanh leader
-# 2. Pick anchor = satellite có angle nhỏ nhất (với hysteresis)
-# 3. Compute slots: θ_s = θ_anchor + s * (2π/N_s) for s=0,1,...,N_s-1
-# 4. Sort satellites theo current angle, assign theo thứ tự
-# 5. Mỗi satellite biết slot của mình -> cost = (1 - cos(θ_actual - θ_slot))
-#
-# Anchor hysteresis: anchor chỉ đổi khi UAV khác có angle nhỏ hơn ≥ threshold
-ANCHOR_HYSTERESIS_RAD = 0.3   # ~17°, anchor không đổi nếu chênh < threshold
-
-# Phase: TRACK cost weights (leader)
-W_leader_slack = 1e3          # phạt slack visibility của leader
-
-# Common cost: collision avoidance (soft, áp mọi mode)
-# Bổ sung hard constraint d >= 2R: giữ margin an toàn d >= d_safe
-W_collision_avoid = 1.0       # weight cho safety preference
-COLLISION_AVOID_DISTANCE = 3 * ROBOT_RADIUS   # = 0.9m cho scenario 5
-                              # 1.5x hard limit (2R)
-                              # đủ margin cho prediction error
-
-# Satellite formation geometry
-# r_d = 0.5 * L (= 25% cạnh FOV đầy đủ = 25% * 2L)
-SAT_DISTANCE_RATIO = 1      # r_d / VIEWING_RADIUS = 0.5
-
-# Hysteresis parameters cho mode switch
-K_IN_THRESHOLD = 3            # cycles liên tiếp có UAV thấy target → TRACK
-K_OUT_THRESHOLD = 10          # cycles liên tiếp không UAV nào thấy → SEARCH
-K_HANDOFF_THRESHOLD = 5       # cycles để handoff leader trong TRACK
-VISIBILITY_MARGIN_RATIO = 0.1 # epsilon = 0.1 * L (margin để robust)
-HANDOFF_DISTANCE_RATIO = 0.5  # Delta_handoff = 0.5 * L
-
-# Mode constants
-MODE_SEARCH = "SEARCH"
-MODE_TRACK = "TRACK"
-
-
-# ============================================================
-# Helper: distance từ 1 điểm đến 1 segment (cho path commit logic)
-# ============================================================
 def _point_to_segment_distance(p, a, b):
     """Khoảng cách Euclidean từ p tới segment ab. Tất cả là np.array (2,)."""
     ab = b - a

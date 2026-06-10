@@ -154,8 +154,92 @@ class SequentialRRTPlanner:
 
         return simplified_path
 
+    def _catmull_rom_smooth(self, path: list, ds: float):
+        """
+        Làm mượt path bằng Catmull-Rom spline (centripetal-style, alpha=0).
+
+        Khác Chaikin (chỉ vạt góc), spline tạo đường cong C1 trơn
+        ĐI QUA các điểm path gốc → mượt tự nhiên như chuyển động thật.
+
+        ds: khoảng cách giữa các điểm sample trên đường cong (m).
+
+        An toàn: kiểm tra collision sau smooth; nếu đâm obstacle →
+        fallback về Chaikin (an toàn hơn vì bám sát path gốc),
+        Chaikin fail nữa thì trả path gốc.
+        """
+        if len(path) < 3:
+            return path
+
+        pts = [np.array(p, dtype=float) for p in path]
+        # Pad 2 đầu để spline có control point (P_{-1} = P_0, P_{n+1} = P_n)
+        ctrl = [pts[0]] + pts + [pts[-1]]
+
+        smoothed = [pts[0]]
+        for i in range(len(pts) - 1):
+            p0, p1, p2, p3 = ctrl[i], ctrl[i+1], ctrl[i+2], ctrl[i+3]
+            seg_len = np.linalg.norm(p2 - p1)
+            n_samples = max(2, int(np.ceil(seg_len / ds)))
+            for j in range(1, n_samples + 1):
+                t = j / n_samples
+                # Catmull-Rom basis (uniform)
+                t2, t3 = t * t, t * t * t
+                point = 0.5 * ((2 * p1) +
+                               (-p0 + p2) * t +
+                               (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
+                               (-p0 + 3*p1 - 3*p2 + p3) * t3)
+                smoothed.append(point)
+
+        # ── Validate collision ──
+        for i in range(len(smoothed) - 1):
+            n0, n1 = Node(smoothed[i]), Node(smoothed[i + 1])
+            if is_collision(n0, n1, self.obs_rect, self.obs_circ,
+                            self.clearance_radius):
+                print("[SMOOTH] Spline collides, falling back to Chaikin.")
+                return self._chaikin_smooth(path, TAR_SMOOTH_ITERATIONS)
+
+        return [list(p) for p in smoothed]
+
+    def _chaikin_smooth(self, path: list, iterations: int):
+        """
+        Làm mượt path bằng Chaikin corner-cutting.
+
+        Mỗi iteration: thay mỗi cặp điểm (P_i, P_{i+1}) bằng 2 điểm
+            Q = 0.75*P_i + 0.25*P_{i+1}
+            R = 0.25*P_i + 0.75*P_{i+1}
+        Giữ nguyên điểm đầu và cuối. Đường gấp khúc → cong dần.
+
+        An toàn: sau khi smooth, kiểm tra collision từng đoạn.
+        Nếu đoạn nào đâm obstacle → trả về path GỐC (không smooth),
+        vì path gốc đã được RRT đảm bảo clear.
+        """
+        if len(path) < 3 or iterations <= 0:
+            return path
+
+        smoothed = [np.array(p, dtype=float) for p in path]
+        for _ in range(iterations):
+            new_path = [smoothed[0]]               # giữ điểm đầu
+            for i in range(len(smoothed) - 1):
+                p0, p1 = smoothed[i], smoothed[i + 1]
+                q = 0.75 * p0 + 0.25 * p1
+                r = 0.25 * p0 + 0.75 * p1
+                new_path.extend([q, r])
+            new_path.append(smoothed[-1])          # giữ điểm cuối
+            smoothed = new_path
+
+        # ── Validate: smoothed path phải clear obstacle ──
+        for i in range(len(smoothed) - 1):
+            n0 = Node(smoothed[i])
+            n1 = Node(smoothed[i + 1])
+            if is_collision(n0, n1, self.obs_rect, self.obs_circ,
+                            self.clearance_radius):
+                print("[SMOOTH] Smoothed path collides, falling back "
+                      "to simplified path.")
+                return path
+
+        return [list(p) for p in smoothed]
+
     def _plan_rrt_path(self):
-        """Hàm nội bộ để lập kế hoạch RRT VÀ làm mượt đường đi."""
+        """Lập kế hoạch RRT, rút gọn (shortcut), rồi làm mượt (Chaikin)."""
         full_path_2d = []
         num_segments = len(self.waypoints_2d) - 1
         print(f"[INFO] Planning a path through {num_segments} segments.")
@@ -175,17 +259,32 @@ class SequentialRRTPlanner:
             # Đảo ngược lại để có thứ tự start -> goal
             raw_segment_path.reverse()
 
-            # --- GỌI HÀM LÀM MƯỢT ĐƯỜNG ĐI ---
+            # --- Rút gọn (shortcutting) ---
             print(f"Simplifying path for segment {i+1}... Original nodes: {len(raw_segment_path)}")
             simplified_segment_path = self._simplify_path(raw_segment_path)
             print(f"Simplified path has {len(simplified_segment_path)} nodes.")
-            # --- KẾT THÚC BƯỚC LÀM MƯỢT ---
 
             if i == 0:
                 full_path_2d.extend(simplified_segment_path)
             else:
                 full_path_2d.extend(simplified_segment_path[1:]) # Bỏ điểm đầu để tránh trùng lặp
-        
+
+        # --- Làm mượt toàn bộ path ---
+        # Smooth SAU khi nối các segment để góc tại waypoint cũng được làm tròn,
+        # target không bị "gãy khúc" tại waypoint → chuyển động tự nhiên hơn.
+        if TAR_SMOOTH_ENABLE:
+            n_before = len(full_path_2d)
+            if TAR_SMOOTH_METHOD == "spline":
+                full_path_2d = self._catmull_rom_smooth(full_path_2d,
+                                                        TAR_SPLINE_DS)
+                print(f"[SMOOTH] Catmull-Rom spline: "
+                      f"{n_before} -> {len(full_path_2d)} nodes.")
+            else:
+                full_path_2d = self._chaikin_smooth(full_path_2d,
+                                                    TAR_SMOOTH_ITERATIONS)
+                print(f"[SMOOTH] Chaikin x{TAR_SMOOTH_ITERATIONS}: "
+                      f"{n_before} -> {len(full_path_2d)} nodes.")
+
         print("\n[INFO] RRT path planning and simplification successful.")
         return full_path_2d
 

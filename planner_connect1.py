@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from config import *
 from utils import *
-from lidar_fixed import *
+from motion_planning_MPC.lidar import *
 
 
 # ============================================================

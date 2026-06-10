@@ -131,6 +131,14 @@ class JPSPlanner:
                 return False, [], set(), set(), 0
             gx, gy = result
         
+        # Edge case: start == goal
+        # Library `pathfind` không handle case này (return empty path)
+        # Trả về path chỉ 1 điểm (UAV đứng yên)
+        if (sx, sy) == (gx, gy):
+            wx, wy = self.grid.grid_to_world(sx, sy)
+            self.expanded = set()
+            return True, [[wx, wy]], set(), set(), 1
+        
         # Convert OccupancyGrid sang pathfind matrix
         matrix = _occupancy_to_matrix(self.grid)
         
