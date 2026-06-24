@@ -16,9 +16,11 @@ UMAX = 20                      # gia tốc tối đa (m/s²)
 SENSING_RADIUS = 10.0          # tầm cảm biến lidar (m)
 SENSING_NEIGHBOR = 5.0         # tầm "thấy" UAV khác (m)
 D_FRAC = 0.0                   # hệ số drag trong dynamics
-
+VIEWING_RADIUS = 5
+HFOV = 90
+VFOV = 90
 # ─── Planner cho UAV ───
-METHOD = 2                     # 1: A*, 2: JPS, 3: RRT
+METHOD = 4                 # 1: A*, 2: JPS, 3: RRT
 # RRT-Connect (chỉ dùng khi METHOD == 3)
 STEP_LENGTH = 0.1
 GOAL_SAMPLE_RATE = 0.01
@@ -45,6 +47,7 @@ W_u = 4e-1                     # control effort
 W_corridor = 1.0               # barrier cost trong safe corridor
 DT_CBF_GAMMA = 0.5             # CBF discrete gamma (visibility leader)
 
+
 # ============================================================
 # 2-PHASE FORMATION PARAMETERS
 # (SEARCH: chưa UAV nào thấy target / TRACK: có leader + satellites)
@@ -58,11 +61,11 @@ MODE_TRACK = "TRACK"
 W_search_track = 1.0           # kéo UAV về predicted target
 
 # ─── TRACK mode: satellites (target-centered formation) ───
-W_sat_distance = 0.5           # giữ khoảng cách r_d tới TARGET
-W_sat_angle = 2.0              # slot angle quanh TARGET (cos-based)
-W_sat_spread = 1.0             # break symmetry, đẩy satellites tản ra
-SAT_DISTANCE_RATIO = 0.5       # r_d = ratio * VIEWING_RADIUS
-
+W_sat_distance = 5.0           # giữ khoảng cách r_d tới TARGET
+W_sat_angle = 5.0              # slot angle quanh TARGET (cos-based)
+W_sat_spread = 2.0             # break symmetry, đẩy satellites tản ra
+SAT_DISTANCE_RATIO = 1.9       # r_d = ratio * VIEWING_RADIUS
+DESIRED_SEPARATION = 0.5 * VIEWING_RADIUS   # d_form = ratio * VIEWING_RADIUS
 # ─── TRACK mode: leader ───
 W_leader_slack = 1e3           # phạt slack CBF visibility
 
@@ -80,7 +83,16 @@ K_HANDOFF_THRESHOLD = 5        # cycles để handoff leader
 VISIBILITY_MARGIN_RATIO = 0.1  # L_strict = L * (1 - ratio)
 HANDOFF_DISTANCE_RATIO = 0.5   # Δ_handoff = ratio * L
 
+FORMATION_GAP = VIEWING_RADIUS
+TRACK_EXIT_HYSTERESIS = 0.5 * VIEWING_RADIUS 
 
+#fix slot assignment
+GRID_CELLS = [(1, 0), (-1, 0), (0, 1), (0, -1),
+              (1, 1), (-1, 1), (-1, -1), (1, -1),
+              (2, 0), (-2, 0), (0, 2), (0, -2)]
+
+SWITCH_MARGIN   = 0.5 * VIEWING_RADIUS   # biên hysteresis: chỉ đổi slot khi rẻ hơn ngần này
+OPEN_ALL_SLOTS  = False 
 # ============================================================
 # 2. SCENARIOS 
 # ============================================================
@@ -95,35 +107,44 @@ SCENARIOS = {
     # Scenario 1:
     # ────────────────────────────────────────────────────────
     1: dict(
-        tar_max_speed=8,
-        viewing_radius=30,
+        tar_max_speed = 2,
+        viewing_radius = 5,
         waypoints=[
-            np.array([16.0, 20.0, 0]),
-            np.array([300.0, 300.0, 0]),
-            np.array([145.0, 465.0, 0]),
-            np.array([450.0, 150.0, 0]),
+            np.array([6.0, 22.0, 0]),
+            np.array([53, 10.0, 0]),
+            np.array([71.5, 20.0, 0]),
+            np.array([115.0, 15.0, 0]),
         ],
         starts=np.array([
-            [20, 19, 3.],
-            [40, 50, 3.],
-            [0, 0, 3.],
+            [5, 23, 3.],
+            [32, 5, 3.],
+            [18, 8, 3.],
         ]),
         rects=[
-            [70, 120, 40, 70],
-            [200, 230, 50, 80],
-            [300, 100, 80, 60],
-            [170, 80, 70, 50],
-            [345, 235, 90, 70],
-            [380, 350, 60, 80],
-            [170, 340, 70, 50],
-            [70, 370, 50, 70],
-            [220, 430, 50, 50],
-            [50, 240, 60, 60],
-            [390, 35, 60, 60],
+            [7, 10, 5, 8],
+            [32, 20, 6, 8],
+            [20, 7, 5, 5],
+            [60, 2, 6, 6],
+
+            
         ],
-        circles=[],
-        xlim=[0, 500],
-        ylim=[0, 500],
+        circles=[[22, 24, 3.5],
+                 [48, 20, 3.5],
+                 [63, 23, 3.5],
+                 [80, 7, 3.5],
+                 [43, 5, 3.5],
+                 [5, 4, 3.5]],
+        xlim=[0, 120],
+        ylim=[-2, 32],
+
+       params=dict(                    # (optional)
+                W_centroid=1.0,
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_form_spread =0.2,
+                W_sat_slot = 1.0,          # trọng số kéo follower về slot (tune; cỡ W_search_track)
+            ),
     ),
 
     # ────────────────────────────────────────────────────────
@@ -133,34 +154,41 @@ SCENARIOS = {
         tar_max_speed=2,
         viewing_radius=5,
         waypoints=[
-            np.array([3, 10, 0]),
-            np.array([30.0, 30.0, 0]),
-            np.array([42, 46, 0]),
-            np.array([45.0, 15.0, 0]),
+            np.array([6.0, 22.0, 0]),
+            np.array([53, 10.0, 0]),
+            np.array([71.5, 20.0, 0]),
+            np.array([115.0, 15.0, 0]),
         ],
         starts=np.array([
-            [15.0, 30.0, 3.],
-            [4.0, 5.0, 3.],
-            [10.0, 5.0, 3.],
-            [20.0, 16.0, 3.],
-            [3.0, 20.0, 3.],
+            [5, 23, 3.],
+            [15, 5, 3.],
+            [47, 25, 3.],
         ]),
         rects=[
-            [7.0, 12.0, 3.0, 5.0],
-            [20.0, 23.0, 5.0, 8.0],
-            [30.0, 10.0, 8.0, 6.0],
-            [17.0, 8.0, 7.0, 5.0],
-            [34.5, 23.5, 9.0, 7.0],
-            [38.0, 35.0, 6.0, 8.0],
-            [17.0, 34.0, 7.0, 5.0],
-            [7.0, 37.0, 5.0, 7.0],
-            [22.0, 43.0, 5.0, 5.0],
-            [5.0, 24.0, 6.0, 6.0],
-            [39.0, 3.5, 6.0, 6.0],
+            [8.5, 10, 5, 8],
+            [32, 20, 8, 6],
+            [20, 7, 7, 7],
+            [60, 5, 6, 6],
+            [48, 17, 6, 6],
+            [90, 10, 8, 5],
+            [92, 20, 5, 5],
+            [108, 5, 5, 7]
         ],
-        circles=[],
-        xlim=[0, 50],
-        ylim=[0, 50],
+        circles=[[22, 24, 3.5],
+                 [63, 23, 3.5],
+                 [80, 7, 3.5],
+                 [43, 5, 3.5],
+                 [5, 5, 3.5],
+                 [80, 25, 3.5],
+                 ],
+        xlim=[0, 120],
+        ylim=[0, 30],
+
+        #     params=dict(                    # (optional)
+        #         W_sat_angle=5.0,
+        #         W_collision_avoid=2.0,
+        #         K_OUT_THRESHOLD=15,
+        #     ),
     ),
 
     # ────────────────────────────────────────────────────────
@@ -170,36 +198,124 @@ SCENARIOS = {
         tar_max_speed=2,
         viewing_radius=5,
         waypoints=[
-            np.array([3, 10, 0]),
-            np.array([30.0, 30.0, 0]),
-            np.array([42, 46, 0]),
-            np.array([45.0, 15.0, 0]),
+            np.array([6.0, 22.0, 0]),
+            np.array([53, 10.0, 0]),
+            np.array([71.5, 20.0, 0]),
+            np.array([115.0, 15.0, 0]),
         ],
         starts=np.array([
-            [20.0, 20.0, 3.],
-            [4.0, 5.0, 3.],
-            [10.0, 5.0, 3.],
+            [5, 23, 3.],
+            [32, 5, 3.],
+            [13, 3, 3.],
+            [47, 25, 3.],
         ]),
         rects=[
-            [7.0, 12.0, 3.0, 5.0],
-            [20.0, 23.0, 5.0, 8.0],
-            [30.0, 10.0, 8.0, 6.0],
-            [17.0, 8.0, 7.0, 5.0],
-            [34.5, 23.5, 9.0, 7.0],
-            [38.0, 35.0, 6.0, 8.0],
-            [17.0, 34.0, 7.0, 5.0],
-            [7.0, 37.0, 5.0, 7.0],
-            [22.0, 43.0, 5.0, 5.0],
-            [5.0, 24.0, 6.0, 6.0],
-            [39.0, 3.5, 6.0, 6.0],
+            [7, 10, 5, 8],
+            [32, 20, 6, 8],
+            [20, 7, 7, 7],
+            [60, 5, 6, 6]
         ],
-        circles=[],
-        xlim=[0, 50],
-        ylim=[0, 50],
+        circles=[[22, 24, 3.5],
+                 [63, 23, 3.5],
+                 [80, 7, 3.5],
+                 [43, 5, 3.5],],
+
+        xlim=[0, 120],
+        ylim=[0, 30],
+        #     params=dict(                    # (optional)
+        #         W_sat_angle=5.0,
+        #         W_collision_avoid=2.0,
+        #         K_OUT_THRESHOLD=15,
+        #     ),
     ),
 
     # ────────────────────────────────────────────────────────
-    # Scenario 4: TEMPLATE — copy đoạn này để tạo kịch bản mới
+    # Scenario 4:
+    # ────────────────────────────────────────────────────────
+    4: dict(
+        tar_max_speed=2,
+        viewing_radius=5,
+        waypoints=[
+            np.array([6.0, 22.0, 0]),
+            np.array([53, 10.0, 0]),
+            np.array([71.5, 20.0, 0]),
+            np.array([115.0, 15.0, 0]),
+        ],
+        starts=np.array([
+            [5, 23, 3.],
+            [32, 5, 3.],
+            [13, 3, 3.],
+            [16, 15, 3.],
+            [47, 25, 3.],
+        ]),
+        rects=[
+            [7, 10, 5, 8],
+            [30, 20, 8, 6],
+            [20, 7, 7, 7],
+            [60, 5, 6, 6],
+
+            
+        ],
+        circles=[[22, 24, 3.5],
+                 [46, 18, 2.5],
+                 [63, 23, 3.5],
+                 [80, 7, 3.5],
+                 [43, 5, 3.5],
+                 [5, 4, 2.5]],
+        xlim=[0, 120],
+        ylim=[0, 30],
+
+        #     params=dict(                    # (optional)
+        #         W_sat_angle=5.0,
+        #         W_collision_avoid=2.0,
+        #         K_OUT_THRESHOLD=15,
+        #     ),
+    ),
+
+    5: dict(
+        tar_max_speed=2,
+        viewing_radius=5,
+        waypoints=[
+            np.array([6.0, 22.0, 0]),
+            np.array([53, 10.0, 0]),
+            np.array([71.5, 20.0, 0]),
+            np.array([115.0, 15.0, 0]),
+        ],
+        starts=np.array([
+            [5, 23, 3.],
+            [32, 5, 3.],
+            # [13, 3, 3.],
+            [16, 15, 3.],
+            [47, 25, 3.],
+        ]),
+        rects=[
+            # [7, 10, 5, 8],
+            # [30, 20, 8, 6],
+            # [20, 7, 7, 7],
+            # [60, 5, 6, 6],
+        ],
+        circles=[
+                #  [22, 24, 3.5],
+                #  [46, 18, 2.5],
+                #  [63, 23, 3.5],
+                #  [80, 7, 3.5],
+                #  [43, 5, 3.5],
+                #  [5, 4, 2.5]
+                 ],
+        xlim=[0, 120],
+        ylim=[0, 30],
+
+            params=dict(                    # (optional)
+                W_centroid=1.0,
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_form_spread=0.2,
+            ),
+    ),
+
+    # ────────────────────────────────────────────────────────
+    # TEMPLATE
     # ────────────────────────────────────────────────────────
     # 4: dict(
     #     tar_max_speed=2,
@@ -212,11 +328,11 @@ SCENARIOS = {
     #         [x, y, 3.],
     #         ...
     #     ]),
-    #     rects=[[x, y, w, h], ...],      # chữ nhật / vuông
-    #     circles=[[cx, cy, r], ...],     # tròn
+    #     rects=[[x, y, w, h], ...],    
+    #     circles=[[cx, cy, r], ...],    
     #     xlim=[0, 50],
     #     ylim=[0, 50],
-    #     params=dict(                    # (optional) tune riêng scenario này
+    #     params=dict(                   
     #         W_sat_angle=5.0,
     #         W_collision_avoid=2.0,
     #         K_OUT_THRESHOLD=15,

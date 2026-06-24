@@ -6,7 +6,7 @@ if METHOD == 2:
 if METHOD == 3:
     from robot_rrt import Robot  
 if METHOD == 4:
-    from robot_jps import Robot  
+    from robot_jps_knn import Robot  
 
 
 import numpy as np

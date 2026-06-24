@@ -10,10 +10,10 @@ def calculate_fov_corners(state, hfov, vfov, prev_yaw=0.0):
     x, y, height = position
     vx, vy = velocity_2d
     
-    if np.linalg.norm(velocity_2d) > 1e-5:
-        yaw = np.arctan2(vy, vx)
-    else:
-        yaw = prev_yaw
+    # if np.linalg.norm(velocity_2d) > 1e-5:
+    #     yaw = np.arctan2(vy, vx)
+    # else:
+    yaw = prev_yaw
     hfov_rad = np.deg2rad(hfov)
     vfov_rad = np.deg2rad(vfov)
 

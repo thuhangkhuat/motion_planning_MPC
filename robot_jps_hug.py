@@ -252,7 +252,7 @@ class Robot:
         # CBF chỉ áp khi self là LEADER trong TRACK mode
         if is_leader:
             slack_leader = opti.variable(HORIZON_LENGTH, 4)  # 4 hướng FOV
-            L = VIEWING_RADIUS
+            L = VIEWING_RADIUS/10
 
             for i in range(HORIZON_LENGTH):
                 cur_pos = opt_states[i, :2]
@@ -797,117 +797,86 @@ class Robot:
     # Relaxed threshold L: dùng để giữ TRACK (chấp nhận ở biên)
     # ============================================================
     def _update_mode_and_role(self, robots):
-        """
-        Update self.mode, self.leader_index, self.is_leader_role,
-        self.satellite_indices.
-
-        Called mỗi cycle, sau khi đã có vị trí mới của tất cả UAV.
-
-        Returns: self.is_leader_role (bool) - tiện cho code calling.
-        """
         target_xy = self.goal[:2]
         L = VIEWING_RADIUS
         epsilon = VISIBILITY_MARGIN_RATIO * L
-        L_strict = L - epsilon
-        L_relaxed = L
+        L_strict, L_relaxed = L - epsilon, L
 
-        # ─── Compute visibility sets ───
-        # Chú ý: tính trên tất cả robots, không chỉ self
-        V_strict = []      # UAV thấy target trong margin strict
-        V_relaxed = []     # UAV thấy target trong margin relaxed
-        dist_to_target = {}    # index -> distance (l-inf norm)
+        # ─── (1) Visibility set + chọn leader (sticky) ───
+        dist_to_target, seers_strict, seers_relaxed = {}, [], []
         for r in robots:
             d_inf = max(abs(r.state[0] - target_xy[0]),
                         abs(r.state[1] - target_xy[1]))
             dist_to_target[r.index] = d_inf
-            if d_inf <= L_strict:
-                V_strict.append(r.index)
-            if d_inf <= L_relaxed:
-                V_relaxed.append(r.index)
+            if d_inf <= L_strict:  seers_strict.append(r.index)
+            if d_inf <= L_relaxed: seers_relaxed.append(r.index)
 
-        # ─── State machine ───
+        if self.leader_index is not None and self.leader_index in seers_relaxed:
+            pass  # giữ leader cũ -> tránh churn (BỎ proximity-handoff)
+        elif seers_strict:
+            self.leader_index = min(seers_strict, key=lambda i: dist_to_target[i])
+        elif seers_relaxed:
+            self.leader_index = min(seers_relaxed, key=lambda i: dist_to_target[i])
+        else:
+            self.leader_index = None  # mất target hoàn toàn
+
+        # ─── (2) Không leader -> mọi UAV SEARCH (reacquire) ───
+        if self.leader_index is None:
+            self.mode = MODE_SEARCH
+            self.is_leader_role = False
+            self.satellite_indices = []
+            self.leader_state_pred = self.leader_current_pos = None
+            self.c_in = 0
+            return False
+
+        # ─── (3) self là leader -> luôn TRACK ───
+        if self.index == self.leader_index:
+            self.mode = MODE_TRACK
+            self.is_leader_role = True
+            self.satellite_indices = [r.index for r in robots if r.index != self.leader_index]
+            self.leader_state_pred = self.states_prediction
+            self.leader_current_pos = self.state[:2].copy()
+            return True
+
+        # ─── (4) self là follower -> mode theo distance-to-leader ───
+        leader_pos = None
+        for r in robots:
+            if r.index == self.leader_index:
+                leader_pos = r.state[:2]
+                self.leader_state_pred = r.states_prediction
+                self.leader_current_pos = r.state[:2].copy()
+                break
+        if leader_pos is None:           # an toàn
+            self.mode = MODE_SEARCH
+            self.is_leader_role = False
+            return False
+
+        d_enter = VIEWING_RADIUS + FORMATION_GAP      # >= 2L theo khuyến nghị
+        d_exit  = d_enter + TRACK_EXIT_HYSTERESIS
+        d2leader = float(np.linalg.norm(self.state[:2] - leader_pos))
+
         if self.mode == MODE_SEARCH:
-            # SEARCH → TRACK
-            if len(V_strict) > 0:
+            if d2leader <= d_enter:
                 self.c_in += 1
                 if self.c_in >= K_IN_THRESHOLD:
-                    self.mode = MODE_TRACK
-                    # Chọn leader: UAV gần target nhất trong V_strict
-                    self.leader_index = min(V_strict,
-                                            key=lambda i: dist_to_target[i])
-                    self.c_out = 0
-                    self.c_handoff = 0
+                    self.mode = MODE_TRACK; self.c_out = 0
             else:
                 self.c_in = 0
-
-        elif self.mode == MODE_TRACK:
-            leader_sees = (self.leader_index in V_relaxed)
-
-            if leader_sees:
-                # Case A: leader vẫn thấy → reset c_out, check handoff
+        else:  # TRACK (satellite)
+            if d2leader >= d_exit:
+                self.c_out += 1
+                if self.c_out >= K_OUT_THRESHOLD:
+                    self.mode = MODE_SEARCH; self.c_in = 0
+            else:
                 self.c_out = 0
 
-                # Optional handoff: UAV khác gần target hơn nhiều
-                best_i = min(dist_to_target, key=lambda i: dist_to_target[i])
-                if best_i != self.leader_index:
-                    delta = dist_to_target[self.leader_index] - dist_to_target[best_i]
-                    threshold = HANDOFF_DISTANCE_RATIO * L
-                    if delta > threshold:
-                        self.c_handoff += 1
-                        if self.c_handoff >= K_HANDOFF_THRESHOLD:
-                            # Handoff
-                            self.leader_index = best_i
-                            self.c_handoff = 0
-                    else:
-                        self.c_handoff = 0
-                else:
-                    self.c_handoff = 0
+        self.is_leader_role = False
+        self.satellite_indices = [r.index for r in robots if r.index != self.leader_index]
 
-            else:
-                # Case B: leader mất target
-                self.c_handoff = 0
-                if len(V_strict) > 0:
-                    # Replacement leader (immediate, no counter)
-                    self.leader_index = min(V_strict,
-                                            key=lambda i: dist_to_target[i])
-                    self.c_out = 0
-                else:
-                    # Không UAV nào thấy
-                    self.c_out += 1
-                    if self.c_out >= K_OUT_THRESHOLD:
-                        self.mode = MODE_SEARCH
-                        self.leader_index = None
-                        self.c_in = 0
-
-        # ─── Update role cache ───
-        self.is_leader_role = (self.mode == MODE_TRACK
-                               and self.leader_index == self.index)
-
-        # Tính satellite_indices (cho satellite cost lookup)
-        if self.mode == MODE_TRACK and self.leader_index is not None:
-            self.satellite_indices = [r.index for r in robots
-                                       if r.index != self.leader_index]
-            # Lookup leader's predicted states (cho cost computation)
-            for r in robots:
-                if r.index == self.leader_index:
-                    self.leader_state_pred = r.states_prediction
-                    self.leader_current_pos = r.state[:2].copy()
-                    break
-        else:
-            self.satellite_indices = []
-            self.leader_state_pred = None
-            self.leader_current_pos = None
-
-        # DEBUG: print mode/leader status (chỉ in cho UAV index 0 để không spam)
-        if self.index == 0:
-            min_d = min(dist_to_target.values()) if dist_to_target else float('inf')
-            print(f"[t={self.time_stamp:.1f}] mode={self.mode}, "
-                  f"leader={self.leader_index}, "
-                  f"V_strict={len(V_strict)}, "
-                  f"min_d={min_d:.2f}, L={L_strict:.2f}, "
-                  f"c_in={self.c_in}, c_out={self.c_out}")
-
-        return self.is_leader_role
+        if self.index == 1:   # debug 1 follower
+            print(f"[t={self.time_stamp:.1f}] fol{self.index} {self.mode} "
+                f"d2L={d2leader:.2f} enter={d_enter:.2f}")
+        return False
 
     # ============================================================
     # NEW: Cost centroid tracking (DEPRECATED in 2-phase design,
