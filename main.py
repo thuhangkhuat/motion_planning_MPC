@@ -2,7 +2,7 @@ from config import *
 if METHOD == 1:
     from robot_astar import Robot
 if METHOD == 2:
-    from robot_jps_hug import Robot  
+    from robot_jps1 import Robot  
 if METHOD == 3:
     from robot_rrt import Robot  
 if METHOD == 4:

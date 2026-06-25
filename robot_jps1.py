@@ -3,14 +3,9 @@ import casadi as ca
 
 import pydecomp as pdc
 
-try:
-    from scipy.optimize import linear_sum_assignment
-    _HAS_SCIPY = True
-except ImportError:
-    _HAS_SCIPY = False
-
 from lidar import LidarScanner
 from utils import *
+# from planner_jps import JPSPlanner
 from planner_jps1 import JPSPlanner, WORLD_BOUNDS_FROM_SCENARIO
 from planner_astar import remove_residual_node   # <-- thay vì from planner import RRT
 from kalman_target import KalmanTargetTracker
@@ -18,6 +13,12 @@ from kalman_target import KalmanTargetTracker
 from config import *
 
 import matplotlib.pyplot as plt
+
+try:
+    from scipy.optimize import linear_sum_assignment
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
 
 
 def _point_to_segment_distance(p, a, b):
@@ -70,9 +71,9 @@ class Robot:
         self._committed_path = None              # path đang dùng (np.array Nx2)
         self._committed_goal = None              # goal lúc commit (cho check drift)
         self._commit_age = 0                     # số cycle đã dùng path này
-        self.MAX_COMMIT_AGE = 10                 # force replan sau N cycles (5s)
-        self.TARGET_REPLAN_THRESHOLD = 2.0       # target dịch > X m -> replan
-        self.PATH_DEVIATION_THRESHOLD = 2.0      # UAV lệch path > X m -> replan
+        self.MAX_COMMIT_AGE = 20                 # force replan sau N cycles (5s)
+        self.TARGET_REPLAN_THRESHOLD = 3.0       # target dịch > X m -> replan
+        self.PATH_DEVIATION_THRESHOLD = 5.0      # UAV lệch path > X m -> replan
 
         # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
         # UAV KHÔNG biết trajectory target. Chỉ đo position mỗi frame
@@ -171,17 +172,9 @@ class Robot:
         self.target_tracker.update(self.goal[:2])
 
         # ─── Lead pursuit: predict future target position ───
-        is_leader = self._update_mode_and_role(robots)
+        planning_goal = self._compute_predicted_goal()
+        self._track_goal = planning_goal
 
-        if (self.mode == MODE_TRACK and not self.is_leader_role
-                and self.leader_current_pos is not None):
-            planning_goal = self._my_slot_world(robots)     # follower -> slot
-        else:
-            planning_goal = self._compute_predicted_goal()  # leader/search -> target
-
-        self._track_goal = planning_goal                    # cho costTracking fallback
-
-        
         # CHANGE #3 + #4: RRT-Connect + path commit + lead pursuit
         self.traj_ref = self.getOrientedGoalTrajectory(
             obstacle_points, planning_goal)
@@ -262,6 +255,7 @@ class Robot:
         # SEARCH: all UAV chase target. No CBF.
         # TRACK: leader has CBF FOV. Satellites do formation.
         # ============================================================
+        is_leader = self._update_mode_and_role(robots)
 
         # CBF chỉ áp khi self là LEADER trong TRACK mode
         if is_leader:
@@ -355,21 +349,7 @@ class Robot:
                 'state': self.state.copy(),
                 'goal': self.goal.copy(),
             })
-         # ── DEBUG: in target/goal của từng robot ──
-        # gx, gy = self.goal[0], self.goal[1]                      # target thật
-        # tg = getattr(self, '_track_goal', self.goal)
-        # tgx, tgy = float(tg[0]), float(tg[1])                    # goal dùng để plan
-        # px, py = self.state[0], self.state[1]                    # vị trí hiện tại
-        # role = ("LEADER" if self.is_leader_role
-        #         else "SAT" if self.mode == MODE_TRACK
-        #         else "SEARCH")
-        # slot = getattr(self, 'my_slot_cell', None)
-        # print(f"[t={self.time_stamp:.1f}] R{self.index} {role:6s} "
-        #       f"pos=({px:6.1f},{py:6.1f}) "
-        #       f"plan_goal=({tgx:6.1f},{tgy:6.1f}) "
-        #       f"err={np.hypot(tgx-px, tgy-py):5.1f} "
-        #       f"target=({gx:6.1f},{gy:6.1f}) "
-        #       f"slot={slot}")
+
         self.updateState(control, TIMESTEP)
 
     # ============================================================
@@ -463,51 +443,64 @@ class Robot:
         if not hasattr(self, 'planner') or self.planner is None:
             # map bền vững sống suốt vòng đời robot (KHÔNG tạo lại mỗi replan)
             self.planner = JPSPlanner(world_bounds=(0, 0, 50, 15),
-                                    agent_id=self.index)
+                                      agent_id=self.index)
 
         # ── Nạp scan LiDAR vào map MỖI control-step (kể cả khi không replan) ──
         self.planner.observe(current_robot_pos, obstacle_points)
 
-        # check va chạm DÙNG CHUNG grid của planner -> hết bất đối xứng
+        # ✅ check va chạm DÙNG CHUNG grid của planner -> hết bất đối xứng
+        #    (KHÔNG dùng is_collision trên obstacle_points 1-frame nữa)
         def _path_clear(path):
             pts = np.asarray(path, dtype=float)
             if len(pts) < 2:
                 ix, iy = self.planner.gmap.world_to_grid(pts[0][0], pts[0][1])
                 return self.planner.gmap.is_free(ix, iy)
             return all(self.planner.gmap.segment_clear(a, b)
-                    for a, b in zip(pts[:-1], pts[1:]))
+                       for a, b in zip(pts[:-1], pts[1:]))
 
         # ── Trigger checks ──
         need_replan = False
         reason = ""
+
         if self._committed_path is None:
             need_replan = True; reason = "no committed path"
         else:
+            # (D) Periodic refresh
             if self._commit_age >= self.MAX_COMMIT_AGE:
                 need_replan = True; reason = f"age limit ({self._commit_age})"
+
+            # (B) Target moved significantly
             elif self._committed_goal is not None:
                 target_drift = np.linalg.norm(current_goal_pos - self._committed_goal)
                 if target_drift > self.TARGET_REPLAN_THRESHOLD:
                     need_replan = True; reason = f"target moved {target_drift:.1f}m"
+
+            # (A) Path collision check  +  (C) UAV deviation check
             if not need_replan:
-                trimmed = self._trim_path_to_pose(self._committed_path, current_robot_pos)
+                trimmed = self._trim_path_to_pose(self._committed_path,
+                                                  current_robot_pos)
                 if not _path_clear(trimmed):
                     need_replan = True; reason = "path collision"
                 else:
-                    dist_to_path = self._distance_to_path(current_robot_pos, self._committed_path)
+                    dist_to_path = self._distance_to_path(
+                        current_robot_pos, self._committed_path)
                     if dist_to_path > self.PATH_DEVIATION_THRESHOLD:
                         need_replan = True; reason = f"deviation {dist_to_path:.1f}m"
 
-        # ── Replan ──
+        # ── Replan nếu cần ──
         if need_replan:
-            self.planner.initialize(tuple(current_robot_pos), tuple(current_goal_pos))
+            # print(f"[Robot {self.index}] Replan: {reason}")
+            self.planner.initialize(tuple(current_robot_pos),
+                                    tuple(current_goal_pos))
+            # observe=False vì đã observe frame này ở trên rồi
             success, raw_path, _, _, _ = self.planner.plan(
                 obstacle_points, ROBOT_RADIUS,
                 time_budget_ms=self.RRT_TIME_BUDGET_MS,
-                observe=False)   # đã observe ở trên rồi -> tránh đếm bằng chứng 2 lần
+                observe=False)
 
             if success and len(raw_path) >= 2:
-                self._committed_path  = np.array(raw_path)   # ĐÃ smooth sẵn trong plan()
+                # raw_path ĐÃ smooth sẵn trong plan() -> không cần remove_residual_node
+                self._committed_path  = np.array(raw_path)
                 self._committed_goal  = current_goal_pos.copy()
                 self._commit_age      = 0
                 self.last_valid_path  = self._committed_path.copy()
@@ -517,17 +510,26 @@ class Robot:
             # Plan fail
             self.planner_fail_count += 1
             print(f"[Robot {self.index}] JPS failed "
-                f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
+                  f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
 
+            # Vẫn thử dùng committed_path nếu nó còn clear (check trên CÙNG grid)
             if self._committed_path is not None:
-                trimmed = self._trim_path_to_pose(self._committed_path, current_robot_pos)
+                trimmed = self._trim_path_to_pose(self._committed_path,
+                                                  current_robot_pos)
                 if _path_clear(trimmed):
                     self._commit_age += 1
                     return self._committed_path
 
+            # Emergency stop sau quá nhiều fail
             if self.planner_fail_count >= self.MAX_FAIL_BEFORE_STOP:
                 return None
+
+            # Tạm dừng UAV (path 2 điểm = pose hiện tại)
             return np.array([list(current_robot_pos), list(current_robot_pos)])
+
+        # ── Dùng path đã commit ──
+        self._commit_age += 1
+        return self._committed_path
 
     # ─── Helpers cho path commit ───
     @staticmethod
@@ -593,23 +595,23 @@ class Robot:
         c_corr_barrier = self.costCorridor(opt_states, self.list_A, self.list_b)
         c_ca = self.costCollisionAvoid(opt_states, robots)
 
-        common = c_u + c_corr_barrier + c_ca
+        common = c_u + c_tra + c_corr_barrier + c_ca
 
         # Mode-specific
         if self.mode == MODE_SEARCH:
             # SEARCH: kéo về target (predicted)
             c_search = self.costSearchTracking(opt_states, target_pos)
-            return c_search + common + c_tra
+            return c_search + common
 
         # TRACK mode
         if self.is_leader_role:
             # Leader: penalize CBF slack, KHÔNG có slot
             c_leader_slack = self.costLeaderSlack(slack_leader)
-            return c_leader_slack + common + c_tra
+            return c_leader_slack + common
 
         # Satellite (target-centered)
         c_slot = self.costSatelliteSlotDynamic(opt_states, robots)
-        return c_slot + common + c_tra
+        return c_slot + common
 
     # ============================================================
     # SEARCH cost: kéo UAV về (predicted) target
@@ -664,19 +666,72 @@ class Robot:
     # SATELLITE costs (chỉ áp khi self là satellite trong TRACK)
     # ============================================================
     def costSatelliteSlotDynamic(self, opt_states, robots):
-        #print(self.index, "->", self.my_slot_cell, "| sats:", sorted(self.satellite_indices), "| leader:", self.leader_index)
-        if (not self.satellite_indices or self.leader_current_pos is None
-            or getattr(self, 'my_slot_cell', None) is None):   # cell chưa được set
+        """
+        Gán slot ĐỘNG mỗi cycle bằng Hungarian (follower × slot), có hysteresis
+        chống lật. Square-FOV: slot = ô lưới cách leader bội số 2L, axis-locked.
+
+        OPEN_ALL_SLOTS=False: dùng n ô đầu (E,W,N,S...) -> đội hình đối xứng, ổn định.
+        OPEN_ALL_SLOTS=True : mở 4 ô axis, Hungarian chọn n ô GẦN nhất -> thích nghi.
+
+        Nhất quán decentralized: dùng r.state[:2] (global, mọi UAV thấy như nhau)
+        + GRID_CELLS chung -> assignment giống hệt trên mọi UAV cùng cycle.
+        """
+        n = len(self.satellite_indices)
+        if n == 0 or self.leader_current_pos is None:
             return 0.0
-        side = 2.0 * VIEWING_RADIUS
+
+        side = 4.0 * VIEWING_RADIUS
         lead = np.asarray(self.leader_current_pos)
-        dx, dy = self.my_slot_cell           # <-- ĐỌC lại, không tính
-        target_xy = ca.DM([lead[0]+dx*side, lead[1]+dy*side])
+
+        # ── Tập slot ứng viên ──
+        if OPEN_ALL_SLOTS:
+            m = min(4, len(GRID_CELLS))        # 4 ô axis (vòng trong)
+        else:
+            m = min(n, len(GRID_CELLS))        # n ô đầu, danh tính cố định
+        cells = GRID_CELLS[:m]
+        slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
+
+        sats = sorted(self.satellite_indices)
+        pos_of = {r.index: r.state[:2] for r in robots if r.index in self.satellite_indices}
+        if self.index not in pos_of:
+            return 0.0
+
+        # ── Ma trận chi phí n×m (m >= n) ──
+        C = np.array([[float(np.linalg.norm(pos_of[i] - slot_pos[j]))
+                    for j in range(m)] for i in sats])
+
+        # ── Giải gán ──
+        if _HAS_SCIPY:
+            row, col = linear_sum_assignment(C)          # xử lý được ma trận chữ nhật
+            new_assign = {sats[r]: int(c) for r, c in zip(row, col)}
+        else:
+            # Fallback không scipy: greedy theo chi phí tăng dần (đủ tốt cho n<=4)
+            new_assign, used = {}, set()
+            order = sorted(((C[a][b], a, b) for a in range(n) for b in range(m)))
+            for _, a, b in order:
+                if sats[a] in new_assign or b in used:
+                    continue
+                new_assign[sats[a]] = b
+                used.add(b)
+        new_cost = sum(C[sats.index(i)][new_assign[i]] for i in sats)
+
+        # ── Hysteresis: giữ assignment cũ trừ khi cái mới rẻ hơn SWITCH_MARGIN ──
+        prev = getattr(self, '_assign', None)
+        if (prev is not None and all(i in prev for i in sats)
+                and all(prev[i] < m for i in sats)):
+            prev_cost = sum(C[sats.index(i)][prev[i]] for i in sats)
+            if new_cost > prev_cost - SWITCH_MARGIN:
+                new_assign = prev
+        self._assign = new_assign
+
+        # ── Cost kéo self về slot của nó ──
+        dx, dy = cells[new_assign[self.index]]
+        self.my_slot_cell = (dx, dy)
+        target_xy = ca.DM([lead[0] + dx * side, lead[1] + dy * side])
         cost = 0
         for k in range(HORIZON_LENGTH + 1):
             cost += ca.sumsqr(opt_states[k, :2].T - target_xy)
         return W_sat_slot * cost
-
     # ============================================================
     # Cost slack cho leader visibility
     # ============================================================
@@ -703,14 +758,6 @@ class Robot:
     # Relaxed threshold L: dùng để giữ TRACK (chấp nhận ở biên)
     # ============================================================
     def _update_mode_and_role(self, robots):
-        """
-        Update self.mode, self.leader_index, self.is_leader_role,
-        self.satellite_indices.
-
-        Called mỗi cycle, sau khi đã có vị trí mới của tất cả UAV.
-
-        Returns: self.is_leader_role (bool) - tiện cho code calling.
-        """
         target_xy = self.goal[:2]
         L = VIEWING_RADIUS
         epsilon = VISIBILITY_MARGIN_RATIO * L
@@ -791,36 +838,7 @@ class Robot:
             print(f"[t={self.time_stamp:.1f}] fol{self.index} {self.mode} "
                 f"d2L={d2leader:.2f} enter={d_enter:.2f}")
         return False
-
-    # ============================================================
-    # NEW: Cost centroid tracking (DEPRECATED in 2-phase design,
-    # giữ làm reference, không gọi nữa)
-    # ============================================================
-    def costCentroidTracking(self, opt_states, neighbors, target_pos):
-        if neighbors is None or len(neighbors) == 0:
-            # Trường hợp 1 UAV: rơi về tracking trực tiếp target
-            cost = 0
-            tgt_xy = target_pos[0, :2]
-            for k in range(HORIZON_LENGTH + 1):
-                cost += ca.sumsqr(opt_states[k, :2] - tgt_xy.reshape(1, 2))
-            return W_centroid * cost
-
-        n = 1 + len(neighbors)
-        tgt_xy = target_pos[0, :2]
-
-        cost = 0
-        for k in range(HORIZON_LENGTH + 1):
-            my_pos = opt_states[k, :2]
-            # Tổng vị trí neighbors tại step k (constant từ states_prediction)
-            neighbor_sum = ca.DM([0.0, 0.0])
-            for other in neighbors:
-                nb_pos = ca.DM(other.states_prediction[k, :2])
-                neighbor_sum = neighbor_sum + nb_pos
-            neighbor_sum_row = ca.reshape(neighbor_sum, 1, 2)
-            centroid = (my_pos + neighbor_sum_row) / n
-            cost += ca.sumsqr(centroid - tgt_xy.reshape(1, 2))
-
-        return W_centroid * cost
+    
 
     def costCorridor(self, traj, A, b):
         cost = 0
@@ -887,6 +905,25 @@ class Robot:
                 cost_col += 1 / (margin + 1e-4)
         return W_col * cost_col
 
+    # ============================================================
+    # CHANGE #2: FIX BUG INDENT trong costFormation
+    # ------------------------------------------------------------
+    # Code gốc:
+    #     for i in range(HORIZON_LENGTH):
+    #         current_pos_k = traj[i, :2]
+    #
+    #     for j, other_prediction in ...:    # <-- nằm NGOÀI for i!
+    #         ...
+    #
+    # => Loop j chỉ chạy 1 lần với i = HORIZON_LENGTH-1
+    # => Formation cost chỉ áp tại state cuối horizon
+    #
+    # Fix: đưa loop j vào TRONG loop i, để mọi state của horizon
+    # đều có formation cost.
+    #
+    # LƯU Ý: Sau fix, cost mạnh hơn ~HORIZON_LENGTH lần. Có thể
+    # cần giảm W_form_dist, W_form_spread trong config tương ứng.
+    # ============================================================
 
     def predictTrajectory(self, state, controls):
         """Computes states after applying a control sequence on initial state"""
@@ -925,78 +962,3 @@ class Robot:
         except Exception as e:
             print(f"Error in generating safe corridor: {e}")
             return [], []
-        
-    def _formation_radius(self,n_sat):
-        L = VIEWING_RADIUS
-        if n_sat <= 1:
-            return 2.0 * L
-        r_neighbor = L / np.sin(np.pi / n_sat)
-        return max(2.0 * L, r_neighbor)
-    
-    # def _my_slot_world(self, robots):
-    #     if not self.satellite_indices or self.leader_current_pos is None:
-    #         self.my_slot_cell = None
-    #         return self._compute_predicted_goal()
-
-    #     side = 1 * VIEWING_RADIUS
-    #     lead = np.asarray(self.leader_current_pos)
-    #     sats = sorted(self.satellite_indices)
-
-    #     sat_key = tuple(sats)
-    #     if getattr(self, '_slot_key', None) != sat_key:
-    #         n = len(sats)
-    #         m = min(max(n, 4), len(GRID_CELLS))          # >=4 ô để chọn gần nhất
-    #         cells = GRID_CELLS[:m]
-    #         slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
-    #         pos = {r.index: r.state[:2] for r in robots if r.index in sats}
-
-    #         C = np.array([[float(np.linalg.norm(pos[i] - slot_pos[j]))
-    #                     for j in range(m)] for i in sats])
-
-    #         if _HAS_SCIPY:
-    #             row, col = linear_sum_assignment(C)
-    #             assign = {sats[r]: cells[c] for r, c in zip(row, col)}
-    #         else:
-    #             assign, used = {}, set()
-    #             for _, a, b in sorted((C[a][b], a, b)
-    #                                 for a in range(n) for b in range(m)):
-    #                 if sats[a] in assign or b in used:
-    #                     continue
-    #                 assign[sats[a]] = cells[b]; used.add(b)
-
-    #         self._frozen_slot = assign
-    #         self._slot_key = sat_key
-
-    #     dx, dy = self._frozen_slot[self.index]
-    #     self.my_slot_cell = (dx, dy)
-    #     return np.array([lead[0] + dx * side, lead[1] + dy * side, self.goal[2]])
-    def _slot_assignment(self, robots, lead, side):
-        sats = sorted(self.satellite_indices)
-        n = len(sats)
-        m = min(max(n, 4), len(GRID_CELLS))
-        cells = GRID_CELLS[:m]
-        slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
-        pos = {r.index: r.state[:2] for r in robots if r.index in sats}
-
-        C = np.array([[float(np.linalg.norm(pos[i] - slot_pos[j]))
-                    for j in range(m)] for i in sats])
-        if _HAS_SCIPY:
-            row, col = linear_sum_assignment(C)
-            return {sats[r]: cells[c] for r, c in zip(row, col)}
-        assign, used = {}, set()
-        for _, a, b in sorted((C[a][b], a, b) for a in range(n) for b in range(m)):
-            if sats[a] in assign or b in used:
-                continue
-            assign[sats[a]] = cells[b]; used.add(b)
-        return assign
-
-    def _my_slot_world(self, robots):
-        if not self.satellite_indices or self.leader_current_pos is None:
-            self.my_slot_cell = None
-            return self._compute_predicted_goal()
-        side = 1 * VIEWING_RADIUS
-        lead = np.asarray(self.leader_current_pos)
-        assign = self._slot_assignment(robots, lead, side)   # GIẢI MỖI CYCLE, nhưng tất định
-        dx, dy = assign[self.index]
-        self.my_slot_cell = (dx, dy)
-        return np.array([lead[0] + dx * side, lead[1] + dy * side, self.goal[2]])

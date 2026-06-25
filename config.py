@@ -11,16 +11,16 @@ HORIZON_LENGTH = 10            # số bước MPC horizon
 
 # ─── UAV physical ───
 ROBOT_RADIUS = 0.3             # bán kính UAV (m)
-VMAX = 5                       # tốc độ tối đa (m/s)
-UMAX = 20                      # gia tốc tối đa (m/s²)
-SENSING_RADIUS = 10.0          # tầm cảm biến lidar (m)
-SENSING_NEIGHBOR = 5.0         # tầm "thấy" UAV khác (m)
+VMAX = 2                       # tốc độ tối đa (m/s)
+UMAX = 5                      # gia tốc tối đa (m/s²)
+SENSING_RADIUS = 3.0          # tầm cảm biến lidar (m)
+SENSING_NEIGHBOR = 3.0         # tầm "thấy" UAV khác (m)
 D_FRAC = 0.0                   # hệ số drag trong dynamics
-VIEWING_RADIUS = 5
+VIEWING_RADIUS = 6
 HFOV = 90
 VFOV = 90
 # ─── Planner cho UAV ───
-METHOD = 4                 # 1: A*, 2: JPS, 3: RRT
+METHOD = 2                 # 1: A*, 2: JPS, 3: RRT
 # RRT-Connect (chỉ dùng khi METHOD == 3)
 STEP_LENGTH = 0.1
 GOAL_SAMPLE_RATE = 0.01
@@ -85,11 +85,12 @@ HANDOFF_DISTANCE_RATIO = 0.5   # Δ_handoff = ratio * L
 
 FORMATION_GAP = VIEWING_RADIUS
 TRACK_EXIT_HYSTERESIS = 0.5 * VIEWING_RADIUS 
-
+SLOT_INVALID_PATIENCE = 3
 #fix slot assignment
-GRID_CELLS = [(1, 0), (-1, 0), (0, 1), (0, -1),
-              (1, 1), (-1, 1), (-1, -1), (1, -1),
-              (2, 0), (-2, 0), (0, 2), (0, -2)]
+# GRID_CELLS = [(1, 0), (-1, 0), (0, 1), (0, -1),
+#               (1, 1), (-1, 1), (-1, -1), (1, -1),
+#               (2, 0), (-2, 0), (0, 2), (0, -2)]
+GRID_CELLS = [(0, 1), (0, -1)]
 
 SWITCH_MARGIN   = 0.5 * VIEWING_RADIUS   # biên hysteresis: chỉ đổi slot khi rẻ hơn ngần này
 OPEN_ALL_SLOTS  = False 
@@ -99,7 +100,7 @@ OPEN_ALL_SLOTS  = False
 
 #     SCENARIO=3 python main.py
 #     SCENARIO=3 python plot_scenario.py --traj
-SCENARIO = int(os.environ.get("SCENARIO", 1))
+SCENARIO = int(os.environ.get("SCENARIO", 6))
 
 SCENARIOS = {
 
@@ -143,7 +144,7 @@ SCENARIOS = {
                 W_col=1.0,
                 W_form_dist=1.0,
                 W_form_spread =0.2,
-                W_sat_slot = 1.0,          # trọng số kéo follower về slot (tune; cỡ W_search_track)
+                W_sat_slot = 1.0,         
             ),
     ),
 
@@ -161,7 +162,7 @@ SCENARIOS = {
         ],
         starts=np.array([
             [5, 23, 3.],
-            [15, 5, 3.],
+            [40, 15, 3.],
             [47, 25, 3.],
         ]),
         rects=[
@@ -174,7 +175,8 @@ SCENARIOS = {
             [92, 20, 5, 5],
             [108, 5, 5, 7]
         ],
-        circles=[[22, 24, 3.5],
+        circles=[
+                 [22, 24, 3.5],
                  [63, 23, 3.5],
                  [80, 7, 3.5],
                  [43, 5, 3.5],
@@ -182,13 +184,16 @@ SCENARIOS = {
                  [80, 25, 3.5],
                  ],
         xlim=[0, 120],
-        ylim=[0, 30],
+        ylim=[-2, 32],
 
-        #     params=dict(                    # (optional)
-        #         W_sat_angle=5.0,
-        #         W_collision_avoid=2.0,
-        #         K_OUT_THRESHOLD=15,
-        #     ),
+            params=dict(                    # (optional)
+                W_centroid=1.0,
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_form_spread =0.2,
+                W_sat_slot = 1.0,         
+            ),
     ),
 
     # ────────────────────────────────────────────────────────
@@ -222,11 +227,14 @@ SCENARIOS = {
 
         xlim=[0, 120],
         ylim=[0, 30],
-        #     params=dict(                    # (optional)
-        #         W_sat_angle=5.0,
-        #         W_collision_avoid=2.0,
-        #         K_OUT_THRESHOLD=15,
-        #     ),
+        params=dict(                    # (optional)
+                W_centroid=1.0,
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_form_spread =0.2,
+                W_sat_slot = 1.0,         
+            ),
     ),
 
     # ────────────────────────────────────────────────────────
@@ -312,6 +320,48 @@ SCENARIOS = {
                 W_form_dist=1.0,
                 W_form_spread=0.2,
             ),
+    ),
+
+    6: dict(
+        tar_max_speed=1,
+        viewing_radius=1.5,
+        waypoints=[
+            np.array([4.0, 2.2, 0]),
+            np.array([18, 7.0, 0]),
+            np.array([33, 3, 0]),
+            np.array([47, 5.5, 0]),
+        ],
+        starts=np.array([
+            [3, 2, 3.],
+            [10, 6, 3.],
+            # [13, 3, 3.],
+            [10, 2, 3.],
+            #[47, 25, 3.],
+        ]),
+        rects=[
+            [7, 7, 2.5, 1.5],
+            [20, 2, 1.5, 2.5],
+            [26, 0.5, 2, 2],
+            [37, 6, 2, 2.5],
+        ],
+        circles=[
+                 [14, 8.5, 1],
+                 [46, 1.5, 1],
+                 [30, 6, 1],
+                 [43, 7, 1],
+                 [15, 2, 1],
+                 [2.5, 5.5, 1],
+                 ],
+        xlim=[0, 50],
+        ylim=[0, 10],
+
+            params=dict(                    # (optional)
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_sat_slot = 1.0,
+            ),
+        
     ),
 
     # ────────────────────────────────────────────────────────

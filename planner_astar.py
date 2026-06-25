@@ -27,9 +27,9 @@ from config import *
 # Parameters
 # ============================================================
 ASTAR_GRID_RESOLUTION = 0.5
-ASTAR_INFLATE_RADIUS = ROBOT_RADIUS + 0.5
+ASTAR_INFLATE_RADIUS = ROBOT_RADIUS + 0.2
 ASTAR_LOCAL_HALF_SIZE = SENSING_RADIUS   # nửa cạnh local grid: 120x120m quanh UAV
-ASTAR_GOAL_PROJECTION_MARGIN = 5.0   # cách biên grid bao nhiêu khi project
+ASTAR_GOAL_PROJECTION_MARGIN = 0.5   # cách biên grid bao nhiêu khi project
 
 
 # ============================================================
