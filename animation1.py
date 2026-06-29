@@ -93,15 +93,17 @@ target_trajectory = data[0]["tar_traj"]
 # print(predictions.shape)
 
 if SCENARIO == 1:
-    size = (8,3.5)
+    size = (15,7.5)
 elif SCENARIO == 2:
-    size = (12,5.5)
+    size = (15,7.5)
 elif SCENARIO == 3:
-    size = (12,5.5)
+    size = (15,7.5)
 elif SCENARIO == 4:
-    size = (12,5.5)
+    size = (15,7.5)
 elif SCENARIO == 6:
     size = (15,7.5)
+elif SCENARIO == 7:
+    size = (12,5.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -115,7 +117,7 @@ for iter_final in [length - 1]:
     for j in range(OBSTACLES.shape[0]):
         x, y, r = OBSTACLES[j,:]
         a, b = getCircle(x, y, r)
-        ax.fill(a, b, color="gray", alpha=0.5, label="Obstacle" if j == 0 else "")
+        ax.fill(a, b, color="black", alpha=1, label="Obstacle" if j == 0 else "")
         ax.plot(a, b, **kwargs)
     # ax.plot([], [], label="Obstacles", **kwargs) # Dòng này có thể không cần thiết
 
@@ -196,7 +198,7 @@ for iter_final in [length - 1]:
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
     ax.axis("scaled")
-    ax.legend()
+    # ax.legend()
     ax.set_xlim(XLIM)
     ax.set_ylim(YLIM)
     plt.tight_layout()

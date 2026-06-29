@@ -3,25 +3,22 @@ import casadi as ca
 
 import pydecomp as pdc
 
+from lidar import LidarScanner
+from utils import *
+from planner_jps1 import JPSPlanner
+from kalman_target import KalmanTargetTracker
+
+from config import *
+
 try:
     from scipy.optimize import linear_sum_assignment
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
 
-from lidar import LidarScanner
-from utils import *
-from planner_jps1 import JPSPlanner, WORLD_BOUNDS_FROM_SCENARIO
-from planner_astar import remove_residual_node   # <-- thay vì from planner import RRT
-from kalman_target import KalmanTargetTracker
-
-from config import *
-
-import matplotlib.pyplot as plt
-
 
 def _point_to_segment_distance(p, a, b):
-    """Khoảng cách Euclidean từ p tới segment ab. Tất cả là np.array (2,)."""
+    """Euclidean distance from point p to segment ab. All are np.array (2,)."""
     ab = b - a
     seg_len_sq = float(np.dot(ab, ab))
     if seg_len_sq < 1e-12:
@@ -42,9 +39,6 @@ class Robot:
         self.control = control
         self.goal = goal
 
-        self.planner_update_counter = 0
-        self.PLANNER_UPDATE_RATE = 1
-
         self.n_state = 6
         self.n_control = 3
 
@@ -53,92 +47,75 @@ class Robot:
                                   resolution=np.pi / 90)
 
         # ----- Planner -----
-        # CHANGE #3: dùng RRT-Connect thay vì RRT (file planner.py cũ).
-        # RRT-Connect không cần warm-start (init mới mỗi cycle), nhưng nhanh
-        # nhờ bi-directional + greedy connect.
-        self.planner = None   # sẽ tạo mới mỗi cycle trong getOrientedGoalTrajectory
+        # Created once on first use and kept for the robot's whole lifetime
+        # (the JPS map is persistent, not rebuilt every replan).
+        self.planner = None
 
-        # CHANGE #4: fallback path khi RRT fail
-        # Lưu path gần nhất tìm được để dùng lại khi planner fail
-        self.last_valid_path = None        # path 2D thành công gần nhất
-        self.planner_fail_count = 0        # đếm số cycle liên tiếp planner fail
-        self.MAX_FAIL_BEFORE_STOP = 3      # quá ngưỡng -> dừng UAV
-        self.RRT_TIME_BUDGET_MS = 30       # time budget cho mỗi plan call
+        # Fallback path bookkeeping when the planner fails.
+        self.last_valid_path = None        # most recent successful 2D path
+        self.planner_fail_count = 0        # consecutive failed plan cycles
+        self.MAX_FAIL_BEFORE_STOP = 3      # above this -> stop the UAV
+        self.RRT_TIME_BUDGET_MS = 30       # time budget per plan call
 
-        # ─── Path commit parameters (chống flip-flop homotopy class) ───
-        # Path đã commit chỉ replan khi cần thiết, không random mỗi cycle.
-        self._committed_path = None              # path đang dùng (np.array Nx2)
-        self._committed_goal = None              # goal lúc commit (cho check drift)
-        self._commit_age = 0                     # số cycle đã dùng path này
-        self.MAX_COMMIT_AGE = 10                 # force replan sau N cycles (5s)
-        self.TARGET_REPLAN_THRESHOLD = 2.0       # target dịch > X m -> replan
-        self.PATH_DEVIATION_THRESHOLD = 2.0      # UAV lệch path > X m -> replan
+        # ─── Path commit parameters (avoid homotopy-class flip-flop) ───
+        # A committed path is only replanned when necessary, not every cycle.
+        self._committed_path = None              # active path (np.array Nx2)
+        self._committed_goal = None              # goal at commit time (drift check)
+        self._commit_age = 0                     # cycles this path has been used
+        self.MAX_COMMIT_AGE = 20                 # force replan after N cycles
+        self.TARGET_REPLAN_THRESHOLD = 3.0       # target moved > X m -> replan
+        self.PATH_DEVIATION_THRESHOLD = 5.0      # UAV off path > X m -> replan
 
-        # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
-        # UAV KHÔNG biết trajectory target. Chỉ đo position mỗi frame
-        # qua sensor (giả định: vision/radar). Kalman filter estimate
-        # velocity từ history -> predict future position.
-        self.USE_LEAD_PURSUIT = True             # bật/tắt lead pursuit
+        # ─── Lead pursuit: predict target position at UAV arrival time ───
+        # The UAV does NOT know the target trajectory. It only measures
+        # position each frame via a sensor (assumed vision/radar). A Kalman
+        # filter estimates velocity from history to predict future position.
+        self.USE_LEAD_PURSUIT = True
         self.target_tracker = KalmanTargetTracker(
             dt=TIMESTEP,
-            process_noise_std=2.0,    # target có thể tăng tốc tới 2 m/s²
-            obs_noise_std=0.3)        # sensor noise 0.3m
+            process_noise_std=2.0,    # target may accelerate up to 2 m/s^2
+            obs_noise_std=0.3)        # sensor noise 0.3 m
 
-        # Adaptive gain parameters
-        # gain = clamp(1.0 - target_speed/VMAX, MIN_GAIN, MAX_GAIN)
-        # target nhanh ~ UAV -> gain thấp (aim gần để không over-shoot)
-        # target chậm     -> gain cao (aim xa để intercept hiệu quả)
+        # Adaptive gain: gain = clamp(1.0 - target_speed/VMAX, MIN, MAX)
+        # fast target (~UAV speed) -> low gain (aim close, avoid overshoot)
+        # slow target             -> high gain (aim far, intercept earlier)
         self.LEAD_GAIN_MIN = 0.4
         self.LEAD_GAIN_MAX = 1.0
-        # Velocity uncertainty threshold - dưới đây thì TIN tracker
-        self.VELOCITY_TRUSTED_THRESHOLD = 1.5     # std velocity < 1.5 m/s thì dùng
+        # Velocity-uncertainty threshold: below this we trust the tracker.
+        self.VELOCITY_TRUSTED_THRESHOLD = 1.5     # std velocity < 1.5 m/s -> use
 
-        # ─── 2-PHASE FORMATION: Mode state ───
-        # SEARCH: no UAV sees target. All UAVs chase homogeneously.
-        # TRACK: ≥1 UAV sees target. Leader (the one seeing) + satellites.
-        # Hysteresis: counter-based để tránh oscillation.
+        # ─── 2-PHASE FORMATION: mode state ───
+        # SEARCH: no UAV sees the target. All UAVs chase homogeneously.
+        # TRACK:  >=1 UAV sees the target. Leader (the seer) + satellites.
+        # Hysteresis is counter-based to avoid oscillation.
         self.mode = MODE_SEARCH
-        self.c_in = 0                # counter: cycles liên tiếp có UAV thấy
-        self.c_out = 0               # counter: cycles liên tiếp không UAV nào thấy
-        self.c_handoff = 0           # counter: cycles UAV khác gần target hơn
+        self.c_in = 0                # consecutive cycles a UAV sees the target
+        self.c_out = 0               # consecutive cycles no UAV sees the target
+        self.c_handoff = 0           # consecutive cycles another UAV is closer
 
-        self.leader_index = None     # index của leader hiện tại (chỉ khi TRACK)
-        self.is_leader_role = False  # self có phải leader không (cached mỗi cycle)
+        self.leader_index = None     # current leader index (only in TRACK)
+        self.is_leader_role = False  # whether self is leader (cached per cycle)
 
-        # Satellite info (computed mỗi cycle khi TRACK)
-        self.satellite_indices = []   # list các index satellites
-        self.leader_state_pred = None # states_prediction của leader (cho cost)
+        # Satellite info (computed each cycle in TRACK).
+        self.satellite_indices = []   # list of satellite indices
+        self.leader_state_pred = None # leader's states_prediction (for cost)
+        self.leader_current_pos = None  # leader's current position
 
-        # Anchor state cho slot dynamic (hysteresis)
-        # Anchor = satellite tham chiếu, slots tính từ anchor angle.
-        # Hysteresis tránh anchor flip-flop khi 2 UAV gần ngang nhau.
-        self.anchor_index = None      # index của anchor hiện tại
-        self.my_slot_angle = None     # slot angle của self (computed mỗi cycle)
+        # Anchor state for dynamic slots (hysteresis).
+        self.anchor_index = None      # current anchor index
+        self.my_slot_angle = None     # self's slot angle (computed per cycle)
 
-        # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
-        # Giải quyết: target di chuyển -> path "đuổi" target hiện tại sẽ
-        # outdated khi UAV đến nơi. Cần aim trước.
-        self.USE_LEAD_PURSUIT = True             # bật/tắt lead pursuit
-        self.LEAD_PURSUIT_GAIN = 1.0             # 1.0 = aim đúng predict
-                                                  # 0.5 = aim giữa current và predict
-                                                  # >1.0 = aim quá xa, aggressive
-        self.target_ref = None                   # tham chiếu tới target object (set bên ngoài)
-
-        # Store the corridor
+        # Store corridors / path for logging and plotting.
         self.corridors = []
         self.corridors_plot = []
-        # Store robot path
         self.path = []
         self.traj_refs = []
-        self.full_path = None
-        self.path_update_counter = 0
-        self.cached_path = None
 
         self.states_prediction = np.ones((HORIZON_LENGTH + 1, self.n_state)) * self.state
         self.controls_prediction = np.zeros((HORIZON_LENGTH, self.n_control))
 
     def updateState(self, control: np.array, dt: float):
-        """Computes the states of robot after applying control signals"""
+        """Compute the robot state after applying control signals."""
         position = self.state[:3]
         velocity = self.state[3:6]
 
@@ -159,36 +136,28 @@ class Robot:
         self.controls_prediction[:-1, :] = self.controls_prediction[1:, :]
 
     def computeControlSignal(self, robots):
-        """Computes control velocity of the copter"""
+        """Compute the control velocity of the copter."""
         scan_data = self.lidar.senseObstacle(
             np.concatenate([self.state[:2], [0]]), robots)
         obstacle_points = self.lidar.getObstaclePoints(
             scan_data, np.concatenate([self.state[:2], [0]]))
 
-        # ─── Update Kalman tracker với target position hiện tại ───
-        # UAV "đo" target qua sensor (ở đây giả định bằng self.goal)
-        # Trong thực tế: replace bằng vision/radar measurement
+        # ─── Update Kalman tracker with the current target measurement ───
+        # The UAV "measures" the target through a sensor (here assumed to be
+        # self.goal). In practice, replace with a vision/radar measurement.
         self.target_tracker.update(self.goal[:2])
 
-        # ─── Lead pursuit: predict future target position ───
-        is_leader = self._update_mode_and_role(robots)
+        # ─── Lead pursuit: predict the future target position ───
+        planning_goal = self._compute_predicted_goal()
+        self._track_goal = planning_goal
 
-        if (self.mode == MODE_TRACK and not self.is_leader_role
-                and self.leader_current_pos is not None):
-            planning_goal = self._my_slot_world(robots)     # follower -> slot
-        else:
-            planning_goal = self._compute_predicted_goal()  # leader/search -> target
-
-        self._track_goal = planning_goal                    # cho costTracking fallback
-
-        
-        # CHANGE #3 + #4: RRT-Connect + path commit + lead pursuit
+        # JPS + path commit + lead pursuit
         self.traj_ref = self.getOrientedGoalTrajectory(
             obstacle_points, planning_goal)
 
-        # Fallback: nếu fail quá nhiều cycle -> emergency stop
+        # Fallback: too many failed cycles -> emergency stop
         if self.traj_ref is None:
-            # UAV dừng: control = 0, không update state qua MPC
+            # UAV stops: control = 0, no MPC state update.
             print(f"[Robot {self.index}] Emergency stop "
                   f"(fail count: {self.planner_fail_count})")
             self.list_A, self.list_b = [], []
@@ -202,8 +171,6 @@ class Robot:
         opti = ca.Opti()
         opt_states = opti.variable(HORIZON_LENGTH + 1, self.n_state)
         opt_controls = opti.variable(HORIZON_LENGTH, self.n_control)
-        # DESIGN MỚI: bỏ slack_cbf cho FOV.
-        # slack_corr cho corridor sẽ được tạo trong block corridor bên dưới.
 
         f = lambda x_, u_: ca.horzcat(*[
             x_[3:],
@@ -215,7 +182,7 @@ class Robot:
             x_next = opt_states[i, :] + f(opt_states[i, :], opt_controls[i, :]) * TIMESTEP
             opti.subject_to(opt_states[i + 1, :] == x_next)
 
-        # Convex corridor constraint (giữ nguyên — không spline)
+        # Convex corridor constraint
         if self.list_A:
             active_A, active_b = None, None
             for A, b in zip(self.list_A, self.list_b):
@@ -226,11 +193,12 @@ class Robot:
             self.corridors.append({'A': active_A, 'b': active_b})
 
             # ============================================================
-            # CORRIDOR: HARD CONSTRAINT (safety - không slack)
+            # CORRIDOR: HARD CONSTRAINT (safety - no slack)
             # ------------------------------------------------------------
-            # Đã thử CBF với slack -> UAV xuyên obstacle vì slack cho phép
-            # ra ngoài corridor. Safety constraint NÊN hard.
-            # MPC có thể infeasible khi hẹp -> dùng try-except fallback.
+            # A CBF with slack let the UAV penetrate obstacles because slack
+            # allowed leaving the corridor. Safety constraints should be hard.
+            # The MPC may become infeasible in tight spaces -> handled by the
+            # try/except fallback below.
             # ============================================================
             if active_A is not None:
                 for i in range(HORIZON_LENGTH + 1):
@@ -239,17 +207,15 @@ class Robot:
                         <= active_b - ROBOT_RADIUS)
 
         # ============================================================
-        # CHANGE #1: BỎ filter `index <` trong neighbor collision
+        # Neighbor collision avoidance (PURE DECENTRALIZED)
         # ------------------------------------------------------------
-        # Lý do: code là PURE DECENTRALIZED (mỗi UAV solve riêng).
-        # Filter `index <` chỉ đúng cho centralized MPC.
-        # Trong decentralized, MỖI UAV phải tự đảm bảo tránh va chạm
-        # với MỌI neighbor, vì UAV index lớn không biết constraint của
-        # UAV index nhỏ.
+        # Each UAV solves on its own, so every UAV must avoid EVERY neighbor.
+        # There is no `index <` filter (that only holds for centralized MPC):
+        # a higher-index UAV cannot see the constraints of a lower-index one.
         # ============================================================
         for i in range(HORIZON_LENGTH):
             for other_robot in neighbor_robots:
-                # chỉ skip chính mình (không skip neighbor index nhỏ hơn)
+                # only skip self (do not skip lower-index neighbors)
                 if self.index == other_robot.index:
                     continue
                 other_pos = ca.reshape(ca.DM(other_robot.states_prediction[i, :2]), 1, 2)
@@ -259,14 +225,15 @@ class Robot:
         # ============================================================
         # 2-PHASE MODE: SEARCH vs TRACK
         # ------------------------------------------------------------
-        # SEARCH: all UAV chase target. No CBF.
-        # TRACK: leader has CBF FOV. Satellites do formation.
+        # SEARCH: all UAVs chase the target. No CBF.
+        # TRACK:  leader has the CBF FOV constraint; satellites do formation.
         # ============================================================
+        is_leader = self._update_mode_and_role(robots)
 
-        # CBF chỉ áp khi self là LEADER trong TRACK mode
+        # CBF only applies when self is the LEADER in TRACK mode.
         if is_leader:
-            slack_leader = opti.variable(HORIZON_LENGTH, 4)  # 4 hướng FOV
-            L = VIEWING_RADIUS/10
+            slack_leader = opti.variable(HORIZON_LENGTH, 4)  # 4 FOV directions
+            L = VIEWING_RADIUS / 10
 
             for i in range(HORIZON_LENGTH):
                 cur_pos = opt_states[i, :2]
@@ -295,8 +262,7 @@ class Robot:
         else:
             self._slack_leader = None
 
-        # Velocity and control bounds (giữ nguyên — code gốc có lặp 2 lần,
-        # mình gộp lại 1 lần cho gọn)
+        # Velocity and control bounds
         for i in range(HORIZON_LENGTH):
             vel = opt_states[i + 1, 3:]
             opti.subject_to(ca.sumsqr(vel) <= VMAX**2)
@@ -311,8 +277,8 @@ class Robot:
                         'ipopt.acceptable_iter': 15}
         opti.solver('ipopt', opts_setting)
 
-        # Cost function (2-phase formation)
-        # Pass `robots` để truy cập satellites' states_prediction
+        # Cost function (2-phase formation). `robots` is passed so the cost can
+        # access the satellites' states_prediction.
         obj = self.costFunction(opt_states, opt_controls, self.traj_ref,
                                 scan_data, self._slack_leader,
                                 neighbor_robots, target_pos, robots)
@@ -325,14 +291,14 @@ class Robot:
         # ============================================================
         # Try solve with fallback for infeasibility
         # ------------------------------------------------------------
-        # Khi MPC infeasible (vd 3 UAV bị nén vào polytope hẹp + phải
-        # nhìn target + không được chạm nhau):
-        #   - Collision constraint vẫn HARD (không được vi phạm SAFETY)
-        #   - Slack CBF cho FOV (preference, có thể tạm xa target)
-        #   - Khi vẫn infeasible: KHÔNG apply control mới
-        #     → dùng controls_prediction shifted từ frame trước
-        #     → UAV decelerate tự nhiên (vì shifted có entry cuối = 0)
-        #     → tạo "buffer time" để target di chuyển ra khỏi vùng khó
+        # When the MPC is infeasible (e.g. several UAVs squeezed into a narrow
+        # polytope while also needing to see the target and stay apart):
+        #   - Collision constraints stay HARD (safety is never violated).
+        #   - The FOV uses slack (a preference; may briefly move off-target).
+        #   - If still infeasible: do NOT apply a new control
+        #       -> reuse the shifted controls_prediction from the previous frame
+        #       -> the UAV decelerates naturally (last shifted entry = 0)
+        #       -> this buys time for the target to leave the hard region.
         # ============================================================
         try:
             sol = opti.solve()
@@ -340,14 +306,12 @@ class Robot:
             self.states_prediction = sol.value(opt_states)
             control = self.controls_prediction[0, :]
         except RuntimeError as e:
-            # Solver fail (thường là infeasibility)
+            # Solver failed (usually infeasibility).
             print(f"[Robot {self.index}] MPC solve failed at t={self.time_stamp:.2f}: "
                   f"{type(e).__name__}")
-            # Fallback: dùng prediction shifted từ frame trước.
-            # controls_prediction[0] là control gốc cho frame TIẾP của lần trước,
-            # tức control bây giờ "lẽ ra" sẽ dùng. UAV vẫn theo plan cũ.
+            # Fallback: reuse the shifted prediction from the previous frame.
             control = self.controls_prediction[0, :]
-            # Lưu lại để debug audit
+            # Keep a debug audit log.
             if not hasattr(self, 'infeasible_log'):
                 self.infeasible_log = []
             self.infeasible_log.append({
@@ -355,59 +319,42 @@ class Robot:
                 'state': self.state.copy(),
                 'goal': self.goal.copy(),
             })
-         # ── DEBUG: in target/goal của từng robot ──
-        # gx, gy = self.goal[0], self.goal[1]                      # target thật
-        # tg = getattr(self, '_track_goal', self.goal)
-        # tgx, tgy = float(tg[0]), float(tg[1])                    # goal dùng để plan
-        # px, py = self.state[0], self.state[1]                    # vị trí hiện tại
-        # role = ("LEADER" if self.is_leader_role
-        #         else "SAT" if self.mode == MODE_TRACK
-        #         else "SEARCH")
-        # slot = getattr(self, 'my_slot_cell', None)
-        # print(f"[t={self.time_stamp:.1f}] R{self.index} {role:6s} "
-        #       f"pos=({px:6.1f},{py:6.1f}) "
-        #       f"plan_goal=({tgx:6.1f},{tgy:6.1f}) "
-        #       f"err={np.hypot(tgx-px, tgy-py):5.1f} "
-        #       f"target=({gx:6.1f},{gy:6.1f}) "
-        #       f"slot={slot}")
+
         self.updateState(control, TIMESTEP)
 
     # ============================================================
-    # LEAD PURSUIT: dự đoán vị trí target tại thời điểm UAV đến
+    # LEAD PURSUIT: predict the target position at UAV arrival time
     # ============================================================
     def _compute_predicted_goal(self):
         """
-        Tính predicted target position dùng cho planning, dựa trên:
-        - Vị trí target hiện tại (self.goal)
-        - Velocity estimate từ Kalman tracker
-        - Travel time = ||target - uav|| / VMAX
-        - Adaptive gain theo tốc độ target
+        Compute the predicted target position used for planning, based on:
+        - current target position (self.goal)
+        - velocity estimate from the Kalman tracker
+        - travel time = ||target - uav|| / VMAX
+        - adaptive gain by target speed
 
-        Trả về np.array(3,) — predicted position [x, y, z].
-        z giữ nguyên = self.goal[2].
-
-        Nếu LEAD_PURSUIT tắt hoặc Kalman chưa converge -> trả về self.goal.
+        Returns np.array(3,) -- predicted position [x, y, z]; z stays = self.goal[2].
+        If lead pursuit is off or the Kalman filter has not converged, returns self.goal.
         """
         current_target = self.goal.copy()
 
         if not self.USE_LEAD_PURSUIT:
             return current_target
 
-        # Kalman chưa tin được velocity -> aim current target
+        # Kalman velocity not yet trustworthy -> aim at the current target.
         vel_uncertainty = self.target_tracker.get_velocity_uncertainty()
         if vel_uncertainty > self.VELOCITY_TRUSTED_THRESHOLD:
             return current_target
 
-        # ─── Tính travel time ───
+        # ─── Travel time ───
         target_pos = self.target_tracker.get_position()
         uav_pos = self.state[:2]
         dist = float(np.linalg.norm(target_pos - uav_pos))
-        # Travel time conservative: dùng VMAX (giả định UAV bay max)
+        # Conservative travel time: assume the UAV flies at VMAX.
         travel_time = dist / max(VMAX, 1e-3)
 
         # ─── Adaptive gain ───
-        # target nhanh -> gain thấp (gần như aim current)
-        # target chậm  -> gain cao (aim xa hơn)
+        # fast target -> low gain (close to current); slow target -> high gain.
         target_speed = self.target_tracker.get_speed()
         speed_ratio = target_speed / VMAX
         gain = 1.0 - speed_ratio
@@ -417,149 +364,142 @@ class Robot:
         target_vel = self.target_tracker.get_velocity()
         predicted_xy = target_pos + target_vel * travel_time * gain
 
-        # Giữ z component từ goal gốc
+        # Keep the z component from the original goal.
         predicted_goal = np.array([predicted_xy[0], predicted_xy[1],
-                                    current_target[2]])
+                                   current_target[2]])
         return predicted_goal
 
     # ============================================================
-    # ------------------------------------------------------------
-    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
-    #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
-    #         -> bám tường, không tiến được
-    #
-    # Giải pháp: COMMIT path. Một khi tìm được path, LOCK lại.
-    # Chỉ replan khi:
-    #   (A) Path cũ đụng obstacle mới
-    #   (B) Target di chuyển > threshold
-    #   (C) UAV lệch khỏi path > threshold
-    #   (D) Đã dùng path cũ quá N cycles (force refresh)
-    # ============================================================
-    # ============================================================
     # JPS with PATH COMMIT
     # ------------------------------------------------------------
-    # JPS deterministic - cùng input -> cùng path. Path commit để tiết kiệm compute.
-    #         -> UAV flip-flop giữa "đi trái" và "đi phải" obstacle
-    #         -> bám tường, không tiến được
+    # JPS is deterministic: same input -> same path, so without commit the UAV
+    # flip-flops between going left/right of an obstacle, hugs walls and stalls.
     #
-    # Giải pháp: COMMIT path. Một khi tìm được path, LOCK lại.
-    # Chỉ replan khi:
-    #   (A) Path cũ đụng obstacle mới
-    #   (B) Target di chuyển > threshold (sau khi áp lead pursuit)
-    #   (C) UAV lệch khỏi path > threshold
-    #   (D) Đã dùng path cũ quá N cycles (force refresh)
+    # Solution: COMMIT the path. Once found, LOCK it. Replan only when:
+    #   (A) the old path hits a new obstacle
+    #   (B) the target moved > threshold (after lead pursuit)
+    #   (C) the UAV deviated from the path > threshold
+    #   (D) the path has been used for more than N cycles (force refresh)
     # ============================================================
     def getOrientedGoalTrajectory(self, obstacle_points, goal):
         current_robot_pos = np.array(self.state[:2])
-        current_goal_pos  = np.array(goal[:2])
+        current_goal_pos = np.array(goal[:2])
 
-        # ── Khởi tạo state + planner MỘT LẦN ──
+        # ── Initialize state + planner once ──
         if not hasattr(self, '_committed_path'):
-            self._committed_path  = None
-            self._committed_goal  = None
-            self._commit_age      = 0
+            self._committed_path = None
+            self._committed_goal = None
+            self._commit_age = 0
             self.planner_fail_count = 0
-            self.last_valid_path  = None
+            self.last_valid_path = None
         if not hasattr(self, 'planner') or self.planner is None:
-            # map bền vững sống suốt vòng đời robot (KHÔNG tạo lại mỗi replan)
+            # Persistent map living for the whole robot lifetime (not rebuilt per replan).
             self.planner = JPSPlanner(world_bounds=(0, 0, 50, 15),
-                                    agent_id=self.index)
+                                      agent_id=self.index)
 
-        # ── Nạp scan LiDAR vào map MỖI control-step (kể cả khi không replan) ──
+        # ── Feed the LiDAR scan into the map every control step (even without replan) ──
         self.planner.observe(current_robot_pos, obstacle_points)
 
-        # check va chạm DÙNG CHUNG grid của planner -> hết bất đối xứng
+        # Collision check uses the planner's SHARED grid -> no asymmetry
+        # (no longer using is_collision on single-frame obstacle_points).
         def _path_clear(path):
             pts = np.asarray(path, dtype=float)
             if len(pts) < 2:
                 ix, iy = self.planner.gmap.world_to_grid(pts[0][0], pts[0][1])
                 return self.planner.gmap.is_free(ix, iy)
             return all(self.planner.gmap.segment_clear(a, b)
-                    for a, b in zip(pts[:-1], pts[1:]))
+                       for a, b in zip(pts[:-1], pts[1:]))
 
         # ── Trigger checks ──
         need_replan = False
         reason = ""
+
         if self._committed_path is None:
             need_replan = True; reason = "no committed path"
         else:
+            # (D) Periodic refresh
             if self._commit_age >= self.MAX_COMMIT_AGE:
                 need_replan = True; reason = f"age limit ({self._commit_age})"
+
+            # (B) Target moved significantly
             elif self._committed_goal is not None:
                 target_drift = np.linalg.norm(current_goal_pos - self._committed_goal)
                 if target_drift > self.TARGET_REPLAN_THRESHOLD:
                     need_replan = True; reason = f"target moved {target_drift:.1f}m"
+
+            # (A) Path collision check  +  (C) UAV deviation check
             if not need_replan:
-                trimmed = self._trim_path_to_pose(self._committed_path, current_robot_pos)
+                trimmed = self._trim_path_to_pose(self._committed_path,
+                                                  current_robot_pos)
                 if not _path_clear(trimmed):
                     need_replan = True; reason = "path collision"
                 else:
-                    dist_to_path = self._distance_to_path(current_robot_pos, self._committed_path)
+                    dist_to_path = self._distance_to_path(
+                        current_robot_pos, self._committed_path)
                     if dist_to_path > self.PATH_DEVIATION_THRESHOLD:
                         need_replan = True; reason = f"deviation {dist_to_path:.1f}m"
 
-        # ── Replan ──
+        # ── Replan if needed ──
         if need_replan:
-            self.planner.initialize(tuple(current_robot_pos), tuple(current_goal_pos))
+            self.planner.initialize(tuple(current_robot_pos),
+                                    tuple(current_goal_pos))
+            # observe=False since we already observed this frame above.
             success, raw_path, _, _, _ = self.planner.plan(
                 obstacle_points, ROBOT_RADIUS,
                 time_budget_ms=self.RRT_TIME_BUDGET_MS,
-                observe=False)   # đã observe ở trên rồi -> tránh đếm bằng chứng 2 lần
+                observe=False)
 
             if success and len(raw_path) >= 2:
-                self._committed_path  = np.array(raw_path)   # ĐÃ smooth sẵn trong plan()
-                self._committed_goal  = current_goal_pos.copy()
-                self._commit_age      = 0
-                self.last_valid_path  = self._committed_path.copy()
+                # raw_path is already smoothed inside plan().
+                self._committed_path = np.array(raw_path)
+                self._committed_goal = current_goal_pos.copy()
+                self._commit_age = 0
+                self.last_valid_path = self._committed_path.copy()
                 self.planner_fail_count = 0
                 return self._committed_path
 
-            # Plan fail
+            # Plan failed
             self.planner_fail_count += 1
             print(f"[Robot {self.index}] JPS failed "
-                f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
+                  f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
 
+            # Still try the committed path if it remains clear (same grid).
             if self._committed_path is not None:
-                trimmed = self._trim_path_to_pose(self._committed_path, current_robot_pos)
+                trimmed = self._trim_path_to_pose(self._committed_path,
+                                                  current_robot_pos)
                 if _path_clear(trimmed):
                     self._commit_age += 1
                     return self._committed_path
 
+            # Emergency stop after too many failures.
             if self.planner_fail_count >= self.MAX_FAIL_BEFORE_STOP:
                 return None
+
+            # Hold the UAV in place (2-point path = current pose).
             return np.array([list(current_robot_pos), list(current_robot_pos)])
 
-    # ─── Helpers cho path commit ───
+        # ── Use the committed path ──
+        self._commit_age += 1
+        return self._committed_path
+
+    # ─── Path-commit helpers ───
     @staticmethod
     def _trim_path_to_pose(path, pose):
-        """Cắt bỏ phần đầu path UAV đã đi qua, prepend pose hiện tại."""
+        """Drop the part of the path already passed and prepend the current pose."""
         if path is None or len(path) < 2:
             return path
         arr = np.asarray(path)
         dists = np.linalg.norm(arr - pose, axis=1)
         idx_nearest = int(np.argmin(dists))
-        # Giữ từ idx_nearest+1 (điểm phía trước UAV)
+        # Keep from idx_nearest+1 (the point ahead of the UAV).
         remaining = list(path[idx_nearest + 1:]) if idx_nearest + 1 < len(path) else []
         if not remaining:
             return [list(pose), list(path[-1])]
         return [list(pose)] + [list(p) for p in remaining]
 
     @staticmethod
-    def _is_path_valid(path, obstacle_points):
-        """Check toàn bộ path còn collision-free."""
-        if path is None or len(path) < 2:
-            return False
-        for i in range(len(path) - 1):
-            a = Node(tuple(path[i]))
-            b = Node(tuple(path[i + 1]))
-            if is_collision(a, b, obstacle_points, ROBOT_RADIUS,
-                            ignore_start=(i == 0)):
-                return False
-        return True
-
-    @staticmethod
     def _distance_to_path(pose, path):
-        """Tính min distance từ pose tới các segment của path."""
+        """Minimum distance from pose to the path segments."""
         if path is None or len(path) < 2:
             return float('inf')
         arr = np.asarray(path)
@@ -570,51 +510,46 @@ class Robot:
                 min_d = d
         return min_d
 
-    def _is_path_still_valid(self, path, obstacle_points):
-        """Backward compat with previous fallback logic."""
-        return self._is_path_valid(path, obstacle_points)
-
     # ============================================================
-    # Cost function (2-PHASE FORMATION DESIGN, TARGET-CENTERED)
+    # Cost function (2-PHASE FORMATION, TARGET-CENTERED)
     # ------------------------------------------------------------
-    # Dispatch theo mode + role:
-    #   SEARCH:   J_search = w_t * tracking target + common
-    #   TRACK Leader:   J_leader = w_cbf * slack + common
-    #                   (leader tự do, KHÔNG có slot, chỉ CBF)
-    #   TRACK Satellite: J_sat = distance + angle + spread + common
-    #                   (distance/angle relative to TARGET, không phải leader)
-    # Common = control + corridor + path + collision_avoid
+    # Dispatch by mode + role:
+    #   SEARCH:          J = w_t * track_target + common
+    #   TRACK leader:    J = w_cbf * slack + common (free, no slot, CBF only)
+    #   TRACK satellite: J = distance + angle + spread + common
+    #                    (relative to TARGET, not to the leader)
+    # common = control + corridor + path + collision_avoid
     # ============================================================
     def costFunction(self, opt_states, opt_controls, traj_ref, scan_data,
                      slack_leader, neighbors, target_pos, robots):
-        # Common (mọi mode)
+        # Common (every mode)
         c_u = self.costControl(opt_controls)
         c_tra = self.costTracking(opt_states, traj_ref)
         c_corr_barrier = self.costCorridor(opt_states, self.list_A, self.list_b)
         c_ca = self.costCollisionAvoid(opt_states, robots)
 
-        common = c_u + c_corr_barrier + c_ca
+        common = c_u + c_tra + c_corr_barrier + c_ca
 
         # Mode-specific
         if self.mode == MODE_SEARCH:
-            # SEARCH: kéo về target (predicted)
+            # SEARCH: pull toward the (predicted) target.
             c_search = self.costSearchTracking(opt_states, target_pos)
-            return c_search + common + c_tra
+            return c_search + common
 
         # TRACK mode
         if self.is_leader_role:
-            # Leader: penalize CBF slack, KHÔNG có slot
+            # Leader: penalize CBF slack, no slot.
             c_leader_slack = self.costLeaderSlack(slack_leader)
-            return c_leader_slack + common + c_tra
+            return c_leader_slack + common
 
         # Satellite (target-centered)
         c_slot = self.costSatelliteSlotDynamic(opt_states, robots)
-        return c_slot + common + c_tra
+        return c_slot + common
 
     # ============================================================
-    # SEARCH cost: kéo UAV về (predicted) target
+    # SEARCH cost: pull the UAV toward the (predicted) target
     # ------------------------------------------------------------
-    # Áp lên cả horizon, không chỉ terminal.
+    # Applied over the whole horizon, not just the terminal state.
     # ============================================================
     def costSearchTracking(self, opt_states, target_pos):
         tgt_xy = target_pos[0, :2]
@@ -624,20 +559,21 @@ class Robot:
         return W_search_track * cost
 
     # ============================================================
-    # COMMON cost: Collision avoidance (soft, every mode)
+    # COMMON cost: collision avoidance (soft, every mode)
     # ------------------------------------------------------------
-    # Hard constraint d >= 2R đã bảo đảm KHÔNG đụng (feasibility).
-    # Soft cost này maintain MARGIN an toàn d >= d_safe (> 2R).
+    # The hard constraint d >= 2R guarantees no collision (feasibility).
+    # This soft cost maintains a safety margin d >= d_safe (> 2R).
     #
     # One-sided quadratic:
-    #   d >= d_safe : cost = 0 (no penalty)
-    #   d < d_safe  : cost = (d_safe - d)^2 (penalize violation)
+    #   d >= d_safe : cost = 0
+    #   d <  d_safe : cost = (d_safe - d)^2
     #
-    # Lý do cần soft + hard:
-    # 1. Hard có thể infeasible khi quá nhiều constraint -> fallback control cũ
-    #    -> Soft kéo UAV ra xa từ trước, giảm risk infeasibility
-    # 2. states_prediction (dùng cho hard) có error -> cần buffer
-    # 3. d=2R là sát biên, không có margin cho disturbance
+    # Why both soft + hard:
+    # 1. The hard constraint can be infeasible with too many constraints
+    #    (-> fallback to old control). The soft cost pushes the UAV away early,
+    #    reducing the risk of infeasibility.
+    # 2. states_prediction (used for the hard constraint) has error -> needs buffer.
+    # 3. d = 2R is right at the boundary, leaving no margin for disturbance.
     # ============================================================
     def costCollisionAvoid(self, opt_states, robots):
         if not robots:
@@ -654,31 +590,86 @@ class Robot:
                     ca.DM(other.states_prediction[k, :2]), 1, 2)
                 diff = my_pos - other_pos
                 d_sq = ca.sumsqr(diff)
-                # ca.sqrt with small eps để smooth gradient
+                # ca.sqrt with a small eps for a smooth gradient.
                 d = ca.sqrt(d_sq + 1e-6)
                 violation = ca.fmax(0, d_safe - d)
                 cost += violation * violation
         return W_collision_avoid * cost
 
     # ============================================================
-    # SATELLITE costs (chỉ áp khi self là satellite trong TRACK)
+    # SATELLITE cost (only when self is a satellite in TRACK)
     # ============================================================
     def costSatelliteSlotDynamic(self, opt_states, robots):
-        #print(self.index, "->", self.my_slot_cell, "| sats:", sorted(self.satellite_indices), "| leader:", self.leader_index)
-        if (not self.satellite_indices or self.leader_current_pos is None
-            or getattr(self, 'my_slot_cell', None) is None):   # cell chưa được set
+        """
+        Assign a DYNAMIC slot each cycle via Hungarian (follower x slot) with
+        hysteresis to prevent flipping. Square-FOV: a slot is a grid cell offset
+        from the leader by a multiple of 2L, axis-locked.
+
+        OPEN_ALL_SLOTS=False: use the first n cells (E,W,N,S...) -> symmetric, stable.
+        OPEN_ALL_SLOTS=True : open 4 axis cells; Hungarian picks the n NEAREST -> adaptive.
+
+        Decentralized consistency: uses r.state[:2] (global, identical for every UAV)
+        + the shared GRID_CELLS, so the assignment is identical on all UAVs in the same cycle.
+        """
+        n = len(self.satellite_indices)
+        if n == 0 or self.leader_current_pos is None:
             return 0.0
-        side = 2.0 * VIEWING_RADIUS
+
+        side = 4.0 * VIEWING_RADIUS
         lead = np.asarray(self.leader_current_pos)
-        dx, dy = self.my_slot_cell           # <-- ĐỌC lại, không tính
-        target_xy = ca.DM([lead[0]+dx*side, lead[1]+dy*side])
+
+        # ── Candidate slot set ──
+        if OPEN_ALL_SLOTS:
+            m = min(4, len(GRID_CELLS))        # 4 axis cells (inner ring)
+        else:
+            m = min(n, len(GRID_CELLS))        # first n cells, fixed identity
+        cells = GRID_CELLS[:m]
+        slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
+
+        sats = sorted(self.satellite_indices)
+        pos_of = {r.index: r.state[:2] for r in robots if r.index in self.satellite_indices}
+        if self.index not in pos_of:
+            return 0.0
+
+        # ── Cost matrix n x m (m >= n) ──
+        C = np.array([[float(np.linalg.norm(pos_of[i] - slot_pos[j]))
+                       for j in range(m)] for i in sats])
+
+        # ── Solve assignment ──
+        if _HAS_SCIPY:
+            row, col = linear_sum_assignment(C)          # handles rectangular matrices
+            new_assign = {sats[r]: int(c) for r, c in zip(row, col)}
+        else:
+            # No-scipy fallback: greedy by increasing cost (good enough for n <= 4).
+            new_assign, used = {}, set()
+            order = sorted(((C[a][b], a, b) for a in range(n) for b in range(m)))
+            for _, a, b in order:
+                if sats[a] in new_assign or b in used:
+                    continue
+                new_assign[sats[a]] = b
+                used.add(b)
+        new_cost = sum(C[sats.index(i)][new_assign[i]] for i in sats)
+
+        # ── Hysteresis: keep the old assignment unless the new one is cheaper by SWITCH_MARGIN ──
+        prev = getattr(self, '_assign', None)
+        if (prev is not None and all(i in prev for i in sats)
+                and all(prev[i] < m for i in sats)):
+            prev_cost = sum(C[sats.index(i)][prev[i]] for i in sats)
+            if new_cost > prev_cost - SWITCH_MARGIN:
+                new_assign = prev
+        self._assign = new_assign
+
+        # ── Cost pulling self toward its slot ──
+        dx, dy = cells[new_assign[self.index]]
+        self.my_slot_cell = (dx, dy)
+        target_xy = ca.DM([lead[0] + dx * side, lead[1] + dy * side])
         cost = 0
         for k in range(HORIZON_LENGTH + 1):
             cost += ca.sumsqr(opt_states[k, :2].T - target_xy)
         return W_sat_slot * cost
 
     # ============================================================
-    # Cost slack cho leader visibility
+    # Leader visibility slack cost
     # ============================================================
     def costLeaderSlack(self, slack_leader):
         if slack_leader is None:
@@ -687,36 +678,26 @@ class Robot:
         return W_leader_slack * ca.sum1(ca.sum2(pos_slack**3))
 
     # ============================================================
-    # Leader selection: dynamic + hysteresis
+    # 2-PHASE MODE STATE MACHINE
     # ------------------------------------------------------------
-    # Trả về True nếu self là leader trong cycle này.
-    # ============================================================
-    # 2-PHASE MODE STATE MACHINE (replace _update_leader_status)
-    # ------------------------------------------------------------
-    # Mode = SEARCH (no UAV sees target) hoặc TRACK (≥1 UAV sees)
-    # Hysteresis counter-based để tránh oscillation
+    # Mode = SEARCH (no UAV sees target) or TRACK (>=1 UAV sees it).
+    # Counter-based hysteresis to avoid oscillation.
     #
-    # Visibility check: FOV vuông cạnh 2L quanh UAV
-    #   sees(i) ⟺ ||p_i - p_target||∞ ≤ L
+    # Visibility check: a square FOV of side 2L around the UAV
+    #   sees(i)  <=>  ||p_i - p_target||_inf <= L
     #
-    # Strict threshold L - ε: dùng để trigger TRACK (cần "rõ ràng thấy")
-    # Relaxed threshold L: dùng để giữ TRACK (chấp nhận ở biên)
+    # Strict threshold L - eps : triggers TRACK (must clearly see the target).
+    # Relaxed threshold L      : holds TRACK (accepts being at the boundary).
+    #
+    # Returns True if self is the leader this cycle.
     # ============================================================
     def _update_mode_and_role(self, robots):
-        """
-        Update self.mode, self.leader_index, self.is_leader_role,
-        self.satellite_indices.
-
-        Called mỗi cycle, sau khi đã có vị trí mới của tất cả UAV.
-
-        Returns: self.is_leader_role (bool) - tiện cho code calling.
-        """
         target_xy = self.goal[:2]
         L = VIEWING_RADIUS
         epsilon = VISIBILITY_MARGIN_RATIO * L
         L_strict, L_relaxed = L - epsilon, L
 
-        # ─── (1) Visibility set + chọn leader (sticky) ───
+        # ─── (1) Visibility set + leader selection (sticky) ───
         dist_to_target, seers_strict, seers_relaxed = {}, [], []
         for r in robots:
             d_inf = max(abs(r.state[0] - target_xy[0]),
@@ -726,15 +707,15 @@ class Robot:
             if d_inf <= L_relaxed: seers_relaxed.append(r.index)
 
         if self.leader_index is not None and self.leader_index in seers_relaxed:
-            pass  # giữ leader cũ -> tránh churn (BỎ proximity-handoff)
+            pass  # keep the old leader -> avoid churn (no proximity handoff)
         elif seers_strict:
             self.leader_index = min(seers_strict, key=lambda i: dist_to_target[i])
         elif seers_relaxed:
             self.leader_index = min(seers_relaxed, key=lambda i: dist_to_target[i])
         else:
-            self.leader_index = None  # mất target hoàn toàn
+            self.leader_index = None  # target fully lost
 
-        # ─── (2) Không leader -> mọi UAV SEARCH (reacquire) ───
+        # ─── (2) No leader -> every UAV goes SEARCH (reacquire) ───
         if self.leader_index is None:
             self.mode = MODE_SEARCH
             self.is_leader_role = False
@@ -743,7 +724,7 @@ class Robot:
             self.c_in = 0
             return False
 
-        # ─── (3) self là leader -> luôn TRACK ───
+        # ─── (3) self is leader -> always TRACK ───
         if self.index == self.leader_index:
             self.mode = MODE_TRACK
             self.is_leader_role = True
@@ -752,7 +733,7 @@ class Robot:
             self.leader_current_pos = self.state[:2].copy()
             return True
 
-        # ─── (4) self là follower -> mode theo distance-to-leader ───
+        # ─── (4) self is a follower -> mode by distance-to-leader ───
         leader_pos = None
         for r in robots:
             if r.index == self.leader_index:
@@ -760,13 +741,13 @@ class Robot:
                 self.leader_state_pred = r.states_prediction
                 self.leader_current_pos = r.state[:2].copy()
                 break
-        if leader_pos is None:           # an toàn
+        if leader_pos is None:           # safety
             self.mode = MODE_SEARCH
             self.is_leader_role = False
             return False
 
-        d_enter = VIEWING_RADIUS + FORMATION_GAP      # >= 2L theo khuyến nghị
-        d_exit  = d_enter + TRACK_EXIT_HYSTERESIS
+        d_enter = VIEWING_RADIUS + FORMATION_GAP      # >= 2L as recommended
+        d_exit = d_enter + TRACK_EXIT_HYSTERESIS
         d2leader = float(np.linalg.norm(self.state[:2] - leader_pos))
 
         if self.mode == MODE_SEARCH:
@@ -787,40 +768,10 @@ class Robot:
         self.is_leader_role = False
         self.satellite_indices = [r.index for r in robots if r.index != self.leader_index]
 
-        if self.index == 1:   # debug 1 follower
+        if self.index == 1:   # debug one follower
             print(f"[t={self.time_stamp:.1f}] fol{self.index} {self.mode} "
-                f"d2L={d2leader:.2f} enter={d_enter:.2f}")
+                  f"d2L={d2leader:.2f} enter={d_enter:.2f}")
         return False
-
-    # ============================================================
-    # NEW: Cost centroid tracking (DEPRECATED in 2-phase design,
-    # giữ làm reference, không gọi nữa)
-    # ============================================================
-    def costCentroidTracking(self, opt_states, neighbors, target_pos):
-        if neighbors is None or len(neighbors) == 0:
-            # Trường hợp 1 UAV: rơi về tracking trực tiếp target
-            cost = 0
-            tgt_xy = target_pos[0, :2]
-            for k in range(HORIZON_LENGTH + 1):
-                cost += ca.sumsqr(opt_states[k, :2] - tgt_xy.reshape(1, 2))
-            return W_centroid * cost
-
-        n = 1 + len(neighbors)
-        tgt_xy = target_pos[0, :2]
-
-        cost = 0
-        for k in range(HORIZON_LENGTH + 1):
-            my_pos = opt_states[k, :2]
-            # Tổng vị trí neighbors tại step k (constant từ states_prediction)
-            neighbor_sum = ca.DM([0.0, 0.0])
-            for other in neighbors:
-                nb_pos = ca.DM(other.states_prediction[k, :2])
-                neighbor_sum = neighbor_sum + nb_pos
-            neighbor_sum_row = ca.reshape(neighbor_sum, 1, 2)
-            centroid = (my_pos + neighbor_sum_row) / n
-            cost += ca.sumsqr(centroid - tgt_xy.reshape(1, 2))
-
-        return W_centroid * cost
 
     def costCorridor(self, traj, A, b):
         cost = 0
@@ -839,10 +790,6 @@ class Robot:
             cost += ca.sum1(1.0 / (d + eps))
         return W_corridor * cost
 
-    def costSlack(self, slack_vars):
-        positive_slack = ca.fmax(slack_vars, 0)
-        return W_slack * ca.sum1(positive_slack**3)
-
     def costControl(self, u):
         cost_u = 0
         for i in range(HORIZON_LENGTH):
@@ -852,9 +799,8 @@ class Robot:
 
     def costTracking(self, traj, traj_ref):
         """
-        Giữ nguyên logic gốc:
-        - Nếu có traj_ref với >= 3 điểm -> track traj_ref[1] (waypoint kế tiếp)
-        - Ngược lại -> track về goal cuối horizon
+        - If traj_ref has >= 3 points -> track traj_ref[1] (next waypoint).
+        - Otherwise -> track the final goal at the horizon end.
         """
         cost_tra = 0
         cost_gui = 0
@@ -869,38 +815,6 @@ class Robot:
         cost_gui += dist_guide**2
         return W_tra * cost_tra + W_gui * cost_gui
 
-    def costCollision(self, traj, scan_data):
-        """
-        CHANGE #5: giữ method để reference nhưng KHÔNG GỌI nữa.
-        Nếu sau này muốn bật làm safety layer cho obstacle thì uncomment
-        trong costFunction. Hiện corridor đã handle obstacle.
-        """
-        cost_col = 0
-        ang, dist = scan_data
-        if dist.shape[0] != 0:
-            min_idx = np.argmin(dist)
-            obs_x = dist[min_idx] * np.cos(ang[min_idx]) + self.state[0]
-            obs_y = dist[min_idx] * np.sin(ang[min_idx]) + self.state[1]
-            for i in range(HORIZON_LENGTH):
-                dist_sq = ca.sumsqr(traj[i, :2] - ca.DM([obs_x, obs_y]).T)
-                margin = dist_sq - ROBOT_RADIUS**2
-                cost_col += 1 / (margin + 1e-4)
-        return W_col * cost_col
-
-
-    def predictTrajectory(self, state, controls):
-        """Computes states after applying a control sequence on initial state"""
-        trajectory = []
-        for i in range(HORIZON_LENGTH):
-            position = state[:3]
-            velocity = state[3:]
-            control = controls[self.n_control * i:self.n_control * (i + 1)]
-            next_position = position + velocity * TIMESTEP
-            next_velocity = velocity + (control - D_FRAC * velocity) * TIMESTEP
-            state = np.concatenate([next_position, next_velocity])
-            trajectory.append(state)
-        return np.array(trajectory)
-
     def getNeighbors(self, robots):
         neighbors = []
         current_pos = self.state[:3]
@@ -914,7 +828,7 @@ class Robot:
         return neighbors
 
     def generateSafeCorridor(self, path_ref, obstacle_points):
-        """Create convex polygon using pydecomp"""
+        """Create a convex polygon using pydecomp."""
         if obstacle_points.shape[0] < 1:
             return [], []
         box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
@@ -925,78 +839,3 @@ class Robot:
         except Exception as e:
             print(f"Error in generating safe corridor: {e}")
             return [], []
-        
-    def _formation_radius(self,n_sat):
-        L = VIEWING_RADIUS
-        if n_sat <= 1:
-            return 2.0 * L
-        r_neighbor = L / np.sin(np.pi / n_sat)
-        return max(2.0 * L, r_neighbor)
-    
-    # def _my_slot_world(self, robots):
-    #     if not self.satellite_indices or self.leader_current_pos is None:
-    #         self.my_slot_cell = None
-    #         return self._compute_predicted_goal()
-
-    #     side = 1 * VIEWING_RADIUS
-    #     lead = np.asarray(self.leader_current_pos)
-    #     sats = sorted(self.satellite_indices)
-
-    #     sat_key = tuple(sats)
-    #     if getattr(self, '_slot_key', None) != sat_key:
-    #         n = len(sats)
-    #         m = min(max(n, 4), len(GRID_CELLS))          # >=4 ô để chọn gần nhất
-    #         cells = GRID_CELLS[:m]
-    #         slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
-    #         pos = {r.index: r.state[:2] for r in robots if r.index in sats}
-
-    #         C = np.array([[float(np.linalg.norm(pos[i] - slot_pos[j]))
-    #                     for j in range(m)] for i in sats])
-
-    #         if _HAS_SCIPY:
-    #             row, col = linear_sum_assignment(C)
-    #             assign = {sats[r]: cells[c] for r, c in zip(row, col)}
-    #         else:
-    #             assign, used = {}, set()
-    #             for _, a, b in sorted((C[a][b], a, b)
-    #                                 for a in range(n) for b in range(m)):
-    #                 if sats[a] in assign or b in used:
-    #                     continue
-    #                 assign[sats[a]] = cells[b]; used.add(b)
-
-    #         self._frozen_slot = assign
-    #         self._slot_key = sat_key
-
-    #     dx, dy = self._frozen_slot[self.index]
-    #     self.my_slot_cell = (dx, dy)
-    #     return np.array([lead[0] + dx * side, lead[1] + dy * side, self.goal[2]])
-    def _slot_assignment(self, robots, lead, side):
-        sats = sorted(self.satellite_indices)
-        n = len(sats)
-        m = min(max(n, 4), len(GRID_CELLS))
-        cells = GRID_CELLS[:m]
-        slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
-        pos = {r.index: r.state[:2] for r in robots if r.index in sats}
-
-        C = np.array([[float(np.linalg.norm(pos[i] - slot_pos[j]))
-                    for j in range(m)] for i in sats])
-        if _HAS_SCIPY:
-            row, col = linear_sum_assignment(C)
-            return {sats[r]: cells[c] for r, c in zip(row, col)}
-        assign, used = {}, set()
-        for _, a, b in sorted((C[a][b], a, b) for a in range(n) for b in range(m)):
-            if sats[a] in assign or b in used:
-                continue
-            assign[sats[a]] = cells[b]; used.add(b)
-        return assign
-
-    def _my_slot_world(self, robots):
-        if not self.satellite_indices or self.leader_current_pos is None:
-            self.my_slot_cell = None
-            return self._compute_predicted_goal()
-        side = 1 * VIEWING_RADIUS
-        lead = np.asarray(self.leader_current_pos)
-        assign = self._slot_assignment(robots, lead, side)   # GIẢI MỖI CYCLE, nhưng tất định
-        dx, dy = assign[self.index]
-        self.my_slot_cell = (dx, dy)
-        return np.array([lead[0] + dx * side, lead[1] + dy * side, self.goal[2]])
