@@ -99,7 +99,7 @@ class Robot:
         self._role = role
 
         # ─── Attractive force: kéo thẳng về formation goal ───
-        to_goal = goal_xy - pos
+        to_goal = (goal_xy - pos)+ VIEWING_RADIUS
         d_goal = float(np.linalg.norm(to_goal))
         if role == "search" and d_goal > 1e-6:
             # search: giữ standoff quanh target (không đè lên target)

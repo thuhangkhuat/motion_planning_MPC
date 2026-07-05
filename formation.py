@@ -30,7 +30,7 @@ try:
 except ImportError:
     _HAS_SCIPY = False
 
-SLOT_SPACING_FACTOR = 2
+SLOT_SPACING_FACTOR = 2.0
 
 
 # ────────────────────────────────────────────────────────────

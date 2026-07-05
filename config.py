@@ -97,9 +97,9 @@ OPEN_ALL_SLOTS  = False
 
 #     SCENARIO=3 python main.py
 #     SCENARIO=3 python plot_scenario.py --traj
-NUMBER_RUN=3
-METHOD = 3  
-SCENARIO = int(os.environ.get("SCENARIO", 1))
+NUMBER_RUN=1
+METHOD = 2  
+SCENARIO = int(os.environ.get("SCENARIO", 2))
 
 SCENARIOS = {
 
@@ -189,8 +189,8 @@ SCENARIOS = {
                  [33.6, 6.8, 0.75],
 
                  ],
-        xlim=[0, 50],
-        ylim=[0, 10],
+        xlim=[-2, 51],
+        ylim=[-1, 11],
 
             params=dict(                    # (optional)
                 W_slack=2.0,
@@ -275,8 +275,8 @@ SCENARIOS = {
                  [15.9, 2, 0.85]
 
                  ],
-        xlim=[0, 50],
-        ylim=[0, 10],
+        xlim=[-1, 51],
+        ylim=[-1, 11],
 
             params=dict(                    # (optional)
                 W_slack=2.0,
@@ -367,8 +367,8 @@ SCENARIOS = {
                   [34, 5.8, 0.65],
                   [23.9, 6.9, 0.55],
                  ],
-        xlim=[0, 50],
-        ylim=[0, 10],
+        xlim=[-1, 51],
+        ylim=[-1, 11],
 
             params=dict(                    # (optional)
                 W_slack=2.0,
@@ -449,10 +449,12 @@ SCENARIOS = {
                   [39, 6, 0.85],
                   [42.0, 2, 0.75],
                   [1.85, 8.6, 0.75],
+                  [33.4, 9.5, 0.85],
+                  [20, 1.88, 0.75]
 
                  ],
-        xlim=[0, 50],
-        ylim=[0, 10],
+        xlim=[-1, 51],
+        ylim=[-1, 11],
 
             params=dict(                    # (optional)
                 W_slack=2.0,
@@ -532,6 +534,7 @@ _circles = _s.get('circles', [])
 OBSTACLES = np.array(_circles, dtype=float) if _circles else np.array([])
 
 # Output files
-FILE_NAME = "data{}_run_{}_scen{}_{}.txt".format(METHOD, NUMBER_RUN, SCENARIO, NUM_ROBOT)
+# FILE_NAME = "data{}_run_{}_scen{}_{}.txt".format(METHOD, NUMBER_RUN, SCENARIO, NUM_ROBOT)
+FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
 FILE_NAME1 = FILE_NAME
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)

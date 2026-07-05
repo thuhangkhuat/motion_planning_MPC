@@ -94,10 +94,10 @@ def main():
         a = np.array([[x[4], x[5], x[8], x[9]] for x in rs], dtype=float)
         me, sd = a.mean(0), a.std(0)
         print(f"scen{s:>2} {mn:<12} "
-              f"time={me[0]:.4f}±{sd[0]:.4f}s  "
-              f"path={me[1]:.1f}±{sd[1]:.1f}m  "
-              f"cov_eff={me[2]:.3f}±{sd[2]:.3f}  "
-              f"vis={me[3]:.1f}±{sd[3]:.1f}%")
+              f"time={me[0]:.3f}±{sd[0]:.4f}s  "
+              f"path={me[1]:.3f}±{sd[1]:.4f}m  "
+              f"cov_eff={me[2]:.3f}±{sd[2]:.4f}  "
+              f"vis={me[3]:.3f}±{sd[3]:.4f}%")
 
 
 if __name__ == "__main__":
