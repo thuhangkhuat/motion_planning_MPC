@@ -14,9 +14,9 @@ ROBOT_RADIUS = 0.2             # bán kính UAV (m)
 VMAX = 2                       # tốc độ tối đa (m/s)
 UMAX = 5                      # gia tốc tối đa (m/s²)
 SENSING_RADIUS = 3.0          # tầm cảm biến lidar (m)
-SENSING_NEIGHBOR = 0.5         # tầm "thấy" UAV khác (m)
+SENSING_NEIGHBOR = 3.0         # tầm "thấy" UAV khác (m)
 D_FRAC = 0.0                   # hệ số drag trong dynamics
-VIEWING_RADIUS = 6
+VIEWING_RADIUS = 1.5
 HFOV = 90
 VFOV = 90
 
@@ -97,8 +97,9 @@ OPEN_ALL_SLOTS  = False
 
 #     SCENARIO=3 python main.py
 #     SCENARIO=3 python plot_scenario.py --traj
-METHOD = 1  
-SCENARIO = int(os.environ.get("SCENARIO", 6))
+NUMBER_RUN=3
+METHOD = 3  
+SCENARIO = int(os.environ.get("SCENARIO", 1))
 
 SCENARIOS = {
 
@@ -333,7 +334,7 @@ SCENARIOS = {
 
     6: dict(
         tar_max_speed=1,
-        viewing_radius=1.3,
+        viewing_radius=1.5,
         waypoints=[
             np.array([4.0, 2.2, 0]),
             np.array([18, 7.0, 0]),
@@ -531,6 +532,6 @@ _circles = _s.get('circles', [])
 OBSTACLES = np.array(_circles, dtype=float) if _circles else np.array([])
 
 # Output files
-FILE_NAME = "data{}_scen{}_{}.txt".format(METHOD, SCENARIO, NUM_ROBOT)
+FILE_NAME = "data{}_run_{}_scen{}_{}.txt".format(METHOD, NUMBER_RUN, SCENARIO, NUM_ROBOT)
 FILE_NAME1 = FILE_NAME
 SAVE_GIF = "results/data{}_scen{}_{}.gif".format(METHOD, SCENARIO, NUM_ROBOT)

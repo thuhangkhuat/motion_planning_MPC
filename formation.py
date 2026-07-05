@@ -30,9 +30,7 @@ try:
 except ImportError:
     _HAS_SCIPY = False
 
-# Khớp `side = 4.0 * VIEWING_RADIUS` trong robot_jps1. Đổi thành 2.0 nếu
-# muốn FOV tile khít (nhớ đổi luôn trong robot_jps1 cho nhất quán).
-SLOT_SPACING_FACTOR = 2.0
+SLOT_SPACING_FACTOR = 2
 
 
 # ────────────────────────────────────────────────────────────

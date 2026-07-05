@@ -6,8 +6,7 @@ import pydecomp as pdc
 from lidar import LidarScanner
 from utils import *
 # from planner_jps import JPSPlanner
-from planner_jps1 import JPSPlanner, WORLD_BOUNDS_FROM_SCENARIO
-from planner_astar import remove_residual_node   # <-- thay vì from planner import RRT
+from planner_jps import JPSPlanner, WORLD_BOUNDS_FROM_SCENARIO
 from kalman_target import KalmanTargetTracker
 
 from config import *

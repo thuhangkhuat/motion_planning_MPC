@@ -5,7 +5,7 @@ import pydecomp as pdc
 
 from lidar import LidarScanner
 from utils import *
-from planner_jps1 import JPSPlanner
+from motion_planning_MPC.planner_jps import JPSPlanner
 from kalman_target import KalmanTargetTracker
 
 from config import *
