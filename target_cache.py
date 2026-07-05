@@ -15,6 +15,11 @@ Cách dùng:
 
 Force regenerate:
     target = load_or_generate_target(TAR_WAYPOINTS, force_regen=True)
+
+Nạp thẳng 1 file cache có sẵn (bỏ qua hash / validate, không gen lại):
+    from target_cache import load_target_from_file
+
+    target = load_target_from_file("cache_target/target_scen1_abc123.pkl")
 """
 
 import os
@@ -55,6 +60,41 @@ def _make_cache_key(waypoints):
 def _cache_path(waypoints):
     key = _make_cache_key(waypoints)
     return os.path.join(CACHE_DIR, f"target_scen{SCENARIO}_{key}.pkl")
+
+
+# ============================================================
+# Reconstruct — dùng chung cho load-theo-hash và load-thẳng-file
+# ============================================================
+def _reconstruct_target(data, waypoints=None):
+    """
+    Tạo lại SequentialRRTPlanner từ cache data (KHÔNG chạy generateTrajectory).
+
+    Args:
+        data: dict đã pickle.load từ file cache
+        waypoints: nếu None -> dùng waypoints lưu ngay trong cache.
+                   Truyền waypoints ngoài khi muốn ép theo config hiện tại.
+
+    Returns:
+        target: SequentialRRTPlanner đã sẵn sàng
+    """
+    if waypoints is None:
+        waypoints = data['waypoints']
+
+    target = SequentialRRTPlanner.__new__(SequentialRRTPlanner)
+    # set các attribute cần thiết (theo target_rrt.py)
+    target.waypoints_3d = [np.array(wp) for wp in waypoints]
+    target.waypoints_2d = [tuple(np.asarray(wp)[:2]) for wp in target.waypoints_3d]
+    target.trajectory = list(data['trajectory'])
+    target.state = target.trajectory[0].copy()
+    target.final_destination = data['final_destination']
+    target.traj_index = 0
+    # Các obstacle config — set lại từ config hiện tại (có thể đổi)
+    from config import RECTANGLE_OBSTACLES, OBSTACLES, TAR_RADIUS
+    target.obs_rect = RECTANGLE_OBSTACLES
+    target.obs_circ = OBSTACLES
+    target.clearance_radius = TAR_RADIUS + SAFETY_MARGIN
+
+    return target
 
 
 # ============================================================
@@ -117,21 +157,8 @@ def _load_target_cache(cache_file, waypoints):
         return None, f"scenario mismatch: cached={data.get('scenario')}, "\
                      f"current={SCENARIO}"
 
-    # Reconstruct SequentialRRTPlanner KHÔNG chạy generateTrajectory()
-    target = SequentialRRTPlanner.__new__(SequentialRRTPlanner)
-    # set các attribute cần thiết (theo target_rrt.py)
-    target.waypoints_3d = [np.array(wp) for wp in waypoints]
-    target.waypoints_2d = [tuple(wp[:2]) for wp in target.waypoints_3d]
-    target.trajectory = list(data['trajectory'])
-    target.state = target.trajectory[0].copy()
-    target.final_destination = data['final_destination']
-    target.traj_index = 0
-    # Các obstacle config — set lại từ config hiện tại (có thể đổi)
-    from config import RECTANGLE_OBSTACLES, OBSTACLES, TAR_RADIUS
-    target.obs_rect = RECTANGLE_OBSTACLES
-    target.obs_circ = OBSTACLES
-    target.clearance_radius = TAR_RADIUS + SAFETY_MARGIN
-
+    # Reconstruct KHÔNG chạy generateTrajectory()
+    target = _reconstruct_target(data, waypoints)
     return target, data
 
 
@@ -194,6 +221,39 @@ def load_or_generate_target(waypoints, force_regen=False, verbose=True):
     return target
 
 
+def load_target_from_file(cache_file, waypoints=None, verbose=True):
+    """
+    Nạp target trajectory TRỰC TIẾP từ 1 file cache cụ thể.
+
+    Khác load_or_generate_target:
+    - KHÔNG hash-matching, KHÔNG validate waypoints/scenario/version
+    - KHÔNG BAO GIỜ gen lại (thiếu file -> raise luôn)
+    Dùng khi đã có sẵn 1 file .pkl "ngon" và muốn ép dùng đúng file đó.
+
+    Args:
+        cache_file: đường dẫn tới file .pkl cần nạp
+        waypoints: mặc định None -> dùng waypoints lưu trong chính cache.
+                   Chỉ truyền vào nếu muốn ép waypoints theo config hiện tại.
+        verbose: in log
+
+    Returns:
+        target: SequentialRRTPlanner đã sẵn sàng
+    """
+    with open(cache_file, 'rb') as f:
+        data = pickle.load(f)
+
+    target = _reconstruct_target(data, waypoints)
+
+    if verbose:
+        print(f"[CACHE] Loaded target DIRECTLY from {cache_file}")
+        print(f"        created_at  : {data.get('created_at', 'N/A')}")
+        print(f"        scenario    : {data.get('scenario', 'N/A')}")
+        print(f"        n_points    : "
+              f"{data.get('n_points', len(target.trajectory))}")
+
+    return target
+
+
 def clear_cache():
     """Xóa toàn bộ cache. Tiện khi muốn reset hoàn toàn."""
     if not os.path.exists(CACHE_DIR):
@@ -246,10 +306,14 @@ if __name__ == "__main__":
     print("\n✅ Cache hoạt động đúng — trajectory load lại giống hệt")
 
     print("\n" + "=" * 60)
-    print("Test 3: Force regen")
+    print("Test 3: Load thẳng từ file (load_target_from_file)")
     print("=" * 60)
-    target3 = load_or_generate_target(TAR_WAYPOINTS, force_regen=True)
-    print(f"State[0]: {target3.state}")
+    direct_file = _cache_path(TAR_WAYPOINTS)
+    target4 = load_target_from_file(direct_file)
+    print(f"State[0]: {target4.state}")
+    assert np.allclose(target1.state, target4.state)
+    assert len(target1.trajectory) == len(target4.trajectory)
+    print("✅ load_target_from_file khớp với bản gen ban đầu")
 
     print("\n" + "=" * 60)
     print("List cache:")

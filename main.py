@@ -1,12 +1,10 @@
 from config import *
 if METHOD == 1:
-    from robot_astar import Robot
+    from robot_apf import Robot
 if METHOD == 2:
-    from robot_jps1 import Robot  
+    from robot_jps import Robot  
 if METHOD == 3:
-    from robot_rrt import Robot  
-if METHOD == 4:
-    from robot_jps_knn import Robot  
+    from robot_mpc import Robot
 
 
 import numpy as np
@@ -68,9 +66,24 @@ if __name__ == "__main__":
             r["tar_traj"] = np.array(target_traj)
             r["corridors"] = np.array(robots[i].corridors_plot)
             data[i] = r
+ 
+        _ct = np.array(compute_times)
+        data["meta"] = {
+            "compute_times": _ct,                                
+            "compute_time_mean": float(_ct.mean()) if _ct.size else float("nan"),
+            "compute_time_max":  float(_ct.max())  if _ct.size else float("nan"),
+            "compute_time_min":  float(_ct.min())  if _ct.size else float("nan"),
+            "num_robot": NUM_ROBOT,
+            "scenario": SCENARIO,
+            "method": METHOD,
+            "iterations": iter,
+            "fov_side": 2 * VIEWING_RADIUS,
+        }
+        # ───────────────────────────────────────────────
+ 
         with open(FILE_NAME, 'wb') as file:
             pickle.dump(data, file, protocol=pickle.HIGHEST_PROTOCOL)
-
+ 
         compute_times = np.array(compute_times)
         if len(compute_times) > 0:
             print("Average time: {:.6}s".format(compute_times.mean()))

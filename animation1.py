@@ -100,10 +100,14 @@ elif SCENARIO == 3:
     size = (15,7.5)
 elif SCENARIO == 4:
     size = (15,7.5)
+elif SCENARIO == 5:
+    size = (15,7.5)
 elif SCENARIO == 6:
     size = (15,7.5)
 elif SCENARIO == 7:
-    size = (12,5.5)
+    size = (12,7.5)
+elif SCENARIO == 8:
+    size = (12,7.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 

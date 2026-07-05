@@ -100,10 +100,14 @@ elif SCENARIO == 3:
     size = (15,7.5)
 elif SCENARIO == 4:
     size = (18,7)
+elif SCENARIO == 5:
+    size = (15,7.5)
 elif SCENARIO == 6:
     size = (12,5.5)
 elif SCENARIO == 7:
-    size = (12,5.5)
+    size = (12,7.5)
+elif SCENARIO == 8:
+    size = (12,7.5)
 plt.figure(figsize=size)
 length = min(data[0]["path"].shape[0], target_trajectory.shape[0])
 
@@ -146,10 +150,10 @@ for iter in range(length):
         # Plot drone
         robot_current_pos = path[iter, 1:4]
         robot_current_vel = path[iter, 4:6]
-        if np.linalg.norm(robot_current_vel) > 1e-5:
-            yaw = math.atan2(robot_current_vel[1], robot_current_vel[0])
-        else:
-            yaw = 0 
+        # if np.linalg.norm(robot_current_vel) > 1e-5:
+        #     yaw = math.atan2(robot_current_vel[1], robot_current_vel[0])
+        # else:
+        yaw = 0 
         T = transformation_matrix([robot_current_pos[0], robot_current_pos[1], robot_current_pos[2], yaw])
         p1_t = np.matmul(T, p1)
         p2_t = np.matmul(T, p2)

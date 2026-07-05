@@ -10,21 +10,15 @@ TIMESTEP = 0.1                 # chu kỳ điều khiển (s)
 HORIZON_LENGTH = 10            # số bước MPC horizon
 
 # ─── UAV physical ───
-ROBOT_RADIUS = 0.3             # bán kính UAV (m)
+ROBOT_RADIUS = 0.2             # bán kính UAV (m)
 VMAX = 2                       # tốc độ tối đa (m/s)
 UMAX = 5                      # gia tốc tối đa (m/s²)
 SENSING_RADIUS = 3.0          # tầm cảm biến lidar (m)
-SENSING_NEIGHBOR = 3.0         # tầm "thấy" UAV khác (m)
+SENSING_NEIGHBOR = 0.5         # tầm "thấy" UAV khác (m)
 D_FRAC = 0.0                   # hệ số drag trong dynamics
 VIEWING_RADIUS = 6
 HFOV = 90
 VFOV = 90
-# ─── Planner cho UAV ───
-METHOD = 2                 # 1: A*, 2: JPS, 3: RRT
-# RRT-Connect (chỉ dùng khi METHOD == 3)
-STEP_LENGTH = 0.1
-GOAL_SAMPLE_RATE = 0.01
-MAX_ITER = 5000
 
 # ─── RRT cho TARGET (sinh trajectory mục tiêu) ───
 TAR_STEP_LENGTH = 0.5
@@ -91,7 +85,9 @@ SLOT_INVALID_PATIENCE = 3
 #               (1, 1), (-1, 1), (-1, -1), (1, -1),
 #               (2, 0), (-2, 0), (0, 2), (0, -2)]
 # GRID_CELLS = [(0, 1), (0, -1)]
-GRID_CELLS = [(0, 1), (-1, 0)]
+# GRID_CELLS = [(0, 1), (-1, 0)]
+# GRID_CELLS = [(0, 1), (-1, 0), (0, -1)]
+GRID_CELLS = [(0, 1), (-1, 0), (0, -1), (1, 0)]
 
 SWITCH_MARGIN   = 0.5 * VIEWING_RADIUS   # biên hysteresis: chỉ đổi slot khi rẻ hơn ngần này
 OPEN_ALL_SLOTS  = False 
@@ -101,7 +97,8 @@ OPEN_ALL_SLOTS  = False
 
 #     SCENARIO=3 python main.py
 #     SCENARIO=3 python plot_scenario.py --traj
-SCENARIO = int(os.environ.get("SCENARIO", 4))
+METHOD = 1  
+SCENARIO = int(os.environ.get("SCENARIO", 6))
 
 SCENARIOS = {
 
@@ -289,7 +286,7 @@ SCENARIOS = {
         
     ),
 
-    7: dict(
+    5: dict(
         tar_max_speed=1,
         viewing_radius=1.5,
         waypoints=[
@@ -300,26 +297,27 @@ SCENARIOS = {
         ],
         starts=np.array([
             [3, 2, 3.],
-            [10, 6, 3.],
-            [10, 2, 3.],
+            [10, 8, 3.],
+            [11, 2, 3.],
+            [1.5, 6, 3.],
         ]),
         rects=[
-            [7, 7, 2.5, 1.5],
-            [20, 2, 1.5, 2.5],
-            [26, 0.5, 2, 2],
-            [37, 6, 2, 2.5],
-            [2, 7.5, 2, 2],
-            [32, 7, 2, 2],
+            [5, 0.5, 1.5, 1.5],
+            [16, 8.5, 2.5, 1],
+            [24, 1.0, 2, 2],
+            [30, 6, 1.5, 2.5],
+            # [2, 7.5, 2, 2],
+            # [32, 7, 2, 2],
         ],
         circles=[
-                 [14, 8.5, 1],
-                 [30, 6, 1],
-                 [15, 3, 1],
-                 [4.5, 5.5, 1],
-                 [20, 7.4, 0.75],
-                 [46, 1.5, 1],
-                 [43, 7, 1],
-                 [35, 2.5, 0.75],
+                  [6.5, 6.0, 0.75],
+                  [18, 4, 1],
+                  [39, 6, 1],
+                #  [4.5, 5.5, 1],
+                #  [20, 7.4, 0.75],
+                #  [46, 1.5, 1],
+                #  [43, 7, 1],
+                #  [35, 2.5, 0.75],
                  ],
         xlim=[0, 50],
         ylim=[0, 10],
@@ -333,6 +331,137 @@ SCENARIOS = {
         
     ),
 
+    6: dict(
+        tar_max_speed=1,
+        viewing_radius=1.3,
+        waypoints=[
+            np.array([4.0, 2.2, 0]),
+            np.array([18, 7.0, 0]),
+            np.array([33, 3, 0]),
+            np.array([47, 5.5, 0]),
+        ],
+        starts=np.array([
+            [3, 2, 3.],
+            [10, 8, 3.],
+            [11, 2, 3.],
+            [1.5, 6, 3.],
+        ]),
+        rects=[
+            [5, 0.5, 1.5, 1.5],
+            [16, 8.5, 2.5, 1],
+            [24, 1.0, 2, 2],
+            [30, 6, 1.5, 2.5],
+            [2.5, 7.7, 2.5, 1.5],
+            [14.2, 1.0, 2.5, 1.5],
+            [34, 7.2, 2, 2],
+            [3, 4.3, 1.5, 1.5]
+        ],
+        circles=[
+                  [6.5, 6.0, 0.75],
+                  [18, 4, 1],
+                  [39, 6, 1],
+                  [27.0, 8.5, 0.85],
+                  [33, 1.8, 0.65],
+                  [21.3, 2.7, 0.75],
+                  [34, 5.8, 0.65],
+                  [23.9, 6.9, 0.55],
+                 ],
+        xlim=[0, 50],
+        ylim=[0, 10],
+
+            params=dict(                    # (optional)
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_sat_slot = 1.0,
+            ),
+        
+    ),
+
+    7: dict(
+        tar_max_speed=1,
+        viewing_radius=1.5,
+        waypoints=[
+            np.array([4.0, 2.2, 0]),
+            np.array([18, 7.0, 0]),
+            np.array([33, 3, 0]),
+            np.array([47, 5.5, 0]),
+        ],
+        starts=np.array([
+            [3, 2, 3.],
+            [10, 8, 3.],
+            [11, 2, 3.],
+            [1.5, 6, 3.],
+            [5, 8.5, 3.]
+        ]),
+        rects=[
+            [16.3, 2.5, 1.5, 1.5],
+            [24, 8.0, 2.5, 1.5],
+            [31.8, 5.2, 1.5, 2.5],
+        ],
+        circles=[
+                  [5.4, 5.8, 0.75],
+                  [24, 2.4, 1],
+                  [39, 6, 0.85],
+                  [42.0, 2, 0.55],
+                 ],
+        xlim=[0, 50],
+        ylim=[0, 10],
+
+            params=dict(                    # (optional)
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_sat_slot = 1.0,
+            ),
+        
+    ),
+
+    8: dict(
+        tar_max_speed=1,
+        viewing_radius=1.5,
+        waypoints=[
+            np.array([4.0, 2.2, 0]),
+            np.array([18, 7.0, 0]),
+            np.array([33, 3, 0]),
+            np.array([47, 5.5, 0]),
+        ],
+        starts=np.array([
+            [3, 2, 3.],
+            [10, 8, 3.],
+            [11, 2, 3.],
+            [1.5, 6, 3.],
+            [5, 8.5, 3.]
+        ]),
+        rects=[
+            [17, 3, 2, 2],
+            [24, 8.0, 2.5, 1.5],
+            [31.8, 5.2, 1.5, 2.5],
+            [13, 0.5, 2.5, 1.2],
+            [5, 0.5, 1, 1],
+            [40, 8, 2.5, 1.5],
+            [7, 8.5, 2, 1],
+        ],
+        circles=[
+                  [5.4, 5.8, 0.75],
+                  [24, 2.6, 1],
+                  [39, 6, 0.85],
+                  [42.0, 2, 0.75],
+                  [1.85, 8.6, 0.75],
+
+                 ],
+        xlim=[0, 50],
+        ylim=[0, 10],
+
+            params=dict(                    # (optional)
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_sat_slot = 1.0,
+            ),
+        
+    ),
+   
    
 
     # ────────────────────────────────────────────────────────
