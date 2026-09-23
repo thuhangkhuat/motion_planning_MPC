@@ -1,6 +1,5 @@
 import math
 import numpy as np
-import matplotlib.pyplot as plt
 
 from config import *
 
@@ -56,14 +55,15 @@ def _ray_rect_intersection(ox, oy, dx, dy, rect):
 class LidarScanner:
     def __init__(self, range_min=0.1, range_max=100.0,
                  angle_min=-math.pi/2, angle_max=math.pi/2,
-                 resolution=math.pi/90, noise=0.01):
+                 resolution=math.pi/90, noise=0.01, march_step=0.1):
         self.range_min = range_min
         self.range_max = range_max
         self.angle_min = angle_min
         self.angle_max = angle_max
         self.resolution = resolution
         self.angle_num = int((self.angle_max - self.angle_min) / self.resolution) + 1
-        self.range_num = int(10 * range_max)
+        # number of ray-marching samples for circular obstacles
+        self.range_num = int(round(range_max / march_step))
         self.noise = noise
 
     def distance(self, pose, obs_pose):

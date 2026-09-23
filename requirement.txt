@@ -1,0 +1,12 @@
+# Python 3.12 
+numpy>=1.26          # 2.4.4
+scipy>=1.11          # 1.17.1
+matplotlib>=3.8
+casadi>=3.6          # 3.8.1
+pathfind>=0.1.2      # JPS planner
+tqdm>=4.66
+
+# pydecomp:
+pycddlib>=2.1,<3
+pyny3d>=0.1.1
+pydecomp==2.0.0

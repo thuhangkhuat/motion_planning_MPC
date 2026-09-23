@@ -1,4 +1,4 @@
-
+import logging
 import time
 import numpy as np
 
@@ -263,6 +263,7 @@ class PersistentLogOddsGrid:
 # Goal projection (rút gọn): kẹp goal vào world nếu nằm ngoài
 # ============================================================
 def project_goal_to_grid(start, goal, grid: PersistentLogOddsGrid, margin=2.0):
+    """Clamp a goal outside the world to `margin` metres inside the border."""
     start = np.asarray(start[:2], float)
     goal = np.asarray(goal[:2], float)
     if grid.is_within_world(goal[0], goal[1]):
@@ -320,6 +321,8 @@ class JPSPlanner:
                  inflate_radius=_INFLATE_DEFAULT,
                  sensing_radius=_SENSING_DEFAULT,
                  treat_unknown_as_blocked=True,
+                 start_snap_radius=10.0, goal_snap_radius=30.0,
+                 goal_clamp_margin=2.0,
                  **grid_kwargs):
         if not PATHFIND_AVAILABLE:
             raise ImportError("Library 'pathfind' chưa cài. Chạy: pip install pathfind")
@@ -329,6 +332,10 @@ class JPSPlanner:
                 "Dùng WORLD_BOUNDS_FROM_SCENARIO(scenario) để lấy từ xlim/ylim.")
 
         self.agent_id = agent_id
+        # search radii (m) used to move a blocked start / goal to a free cell
+        self.start_snap_radius = float(start_snap_radius)
+        self.goal_snap_radius = float(goal_snap_radius)
+        self.goal_clamp_margin = float(goal_clamp_margin)
         self.start = None
         self.goal = None
 
@@ -344,6 +351,10 @@ class JPSPlanner:
                 treat_unknown_as_blocked=treat_unknown_as_blocked, **grid_kwargs)
             if agent_id is not None:
                 JPSPlanner._MAP_REGISTRY[key] = self.gmap
+
+    def _cells(self, metres):
+        """Convert a distance in metres to a whole number of grid cells."""
+        return max(1, int(np.ceil(metres / self.gmap.resolution - 1e-9)))
 
     # ---- API ----
     def initialize(self, start, goal):
@@ -376,7 +387,8 @@ class JPSPlanner:
 
         # 2) toạ độ grid
         sx, sy = self.gmap.world_to_grid(self.start[0], self.start[1])
-        local_goal, _ = project_goal_to_grid(self.start, self.goal, self.gmap)
+        local_goal, _ = project_goal_to_grid(self.start, self.goal, self.gmap,
+                                             margin=self.goal_clamp_margin)
         gx, gy = self.gmap.world_to_grid(local_goal[0], local_goal[1])
 
         if not self.gmap.in_bounds(sx, sy) or not self.gmap.in_bounds(gx, gy):
@@ -384,7 +396,7 @@ class JPSPlanner:
 
         # 3) start kẹt -> nhích ra ô free gần nhất
         if not self.gmap.is_free(sx, sy):
-            r = self.gmap.nearest_free(sx, sy, max_radius=20)
+            r = self.gmap.nearest_free(sx, sy, max_radius=self._cells(self.start_snap_radius))
             if r[0] is None:
                 return False, [], set(), set(), 0
             sx, sy = r
@@ -393,7 +405,7 @@ class JPSPlanner:
         #    -> kéo về ô free gần goal nhất = điểm biên (frontier) hướng goal.
         #    bán kính lớn để vượt qua bóng/khối vật cản to.
         if not self.gmap.is_free(gx, gy):
-            r = self.gmap.nearest_free(gx, gy, max_radius=60)
+            r = self.gmap.nearest_free(gx, gy, max_radius=self._cells(self.goal_snap_radius))
             if r[0] is None:
                 return False, [], set(), set(), 0
             gx, gy = r
@@ -413,7 +425,8 @@ class JPSPlanner:
             path_strs = pathfind.find(graph, start=start_str, end=end_str,
                                       method="jps")
         except Exception as e:
-            print(f"JPS library error: {type(e).__name__}: {e}")
+            logging.getLogger("planner").warning("JPS library error: %s: %s",
+                                                 type(e).__name__, e)
             return False, [], set(), set(), 0
 
         if not path_strs:

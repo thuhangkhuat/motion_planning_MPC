@@ -1,24 +1,3 @@
-"""
-plot_scenario.py — Tool xem trước kịch bản (obstacle + target path + UAV starts).
-
-CÁCH DÙNG:
-    # Vẽ scenario đang chọn trong config (SCENARIO):
-    python plot_scenario.py
-
-    # Vẽ scenario cụ thể:
-    python plot_scenario.py 3
-
-    # Vẽ kèm trajectory thực của target (chạy RRT + smooth, hơi lâu):
-    python plot_scenario.py --traj
-    python plot_scenario.py 3 --traj
-
-HIỂN THỊ:
-    - Obstacle chữ nhật/vuông (xám) + tròn (xám)
-    - Waypoints target (đỏ, đánh số thứ tự) + đường nối (đứt nét)
-    - Trajectory thực của target sau RRT + smoothing (nếu --traj)
-    - Vị trí xuất phát UAV (tam giác xanh, đánh số)
-    - Thông tin: density obstacle, số UAV, kích thước map
-"""
 
 import sys
 import numpy as np
@@ -43,25 +22,24 @@ def parse_args():
 
 def main():
     scenario_arg, with_traj = parse_args()
-
-    # QUAN TRỌNG: set env TRƯỚC khi import config để mọi module
-    # (config, target_rrt, target_cache) cùng thấy đúng scenario —
-    # obstacles, tốc độ target, cache key đều nhất quán.
     if scenario_arg is not None:
         import os
         os.environ["SCENARIO"] = str(scenario_arg)
 
-    from config import (TAR_WAYPOINTS, STARTS, XLIM, YLIM,
-                        SCENARIO, SCENARIOS)
+    from config import (STARTS, XLIM, YLIM, SCENARIO, SCENARIOS)
+    from target_manual import load_waypoints, TARGET_MODE
     _s = SCENARIOS[SCENARIO]
-    waypoints = TAR_WAYPOINTS
+    waypoints, _, _wp_src = load_waypoints()
+    if TARGET_MODE == "rrt":
+        from config import TAR_WAYPOINTS
+        waypoints = TAR_WAYPOINTS
     starts = STARTS
     rects = _s['rects']
     circles = _s.get('circles', [])
     xlim, ylim = XLIM, YLIM
     scen_no = SCENARIO
 
-    # ─── Tính density ───
+ 
     map_area = (xlim[1] - xlim[0]) * (ylim[1] - ylim[0])
     obs_area = sum(w * h for (_, _, w, h) in rects)
     obs_area += sum(np.pi * r * r for (_, _, r) in circles)
@@ -80,7 +58,7 @@ def main():
         ax.add_patch(patches.Circle((cx, cy), r,
                      facecolor='gray', alpha=0.7, edgecolor='black'))
 
-    # Waypoints + đường nối
+    # Waypoints + path
     wp = np.array([w[:2] for w in waypoints])
     ax.plot(wp[:, 0], wp[:, 1], 'r--', linewidth=1.5, alpha=0.7,
             label='Waypoint polyline')
@@ -93,13 +71,13 @@ def main():
 
     # Trajectory thực (optional)
     if with_traj:
-        print("Generating target trajectory (RRT + smooth)...")
+        print(f"Generating target trajectory ({TARGET_MODE})...")
         try:
-            from target_cache import load_or_generate_target
-            target = load_or_generate_target(waypoints, verbose=True)
+            from target_manual import create_target
+            target = create_target(verbose=True)
             traj = np.array([p[:2] for p in target.trajectory])
             ax.plot(traj[:, 0], traj[:, 1], 'b-', linewidth=2, alpha=0.8,
-                    label='Target trajectory (RRT + smooth)')
+                    label=f'Target trajectory ({TARGET_MODE})')
         except Exception as e:
             print(f"Không gen được trajectory: {e}")
 

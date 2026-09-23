@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+runs/
+results/
+cache_target/
+data*_scen*_*.txt
+scenario_*_preview.png
+*.gif

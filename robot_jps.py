@@ -6,12 +6,14 @@ import pydecomp as pdc
 from lidar import LidarScanner
 from utils import *
 # from planner_jps import JPSPlanner
-from planner_jps import JPSPlanner, WORLD_BOUNDS_FROM_SCENARIO
+from planner_jps import JPSPlanner
 from kalman_target import KalmanTargetTracker
 
 from config import *
 
-import matplotlib.pyplot as plt
+import logging
+
+log = logging.getLogger("robot")
 
 try:
     from scipy.optimize import linear_sum_assignment
@@ -48,9 +50,10 @@ class Robot:
         self.n_state = 6
         self.n_control = 3
 
-        self.lidar = LidarScanner(range_min=0.1, range_max=SENSING_RADIUS,
+        self.lidar = LidarScanner(range_min=LIDAR_RANGE_MIN, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi,
-                                  resolution=np.pi / 90)
+                                  resolution=LIDAR_ANGULAR_RES, noise=LIDAR_NOISE,
+                                  march_step=LIDAR_MARCH_STEP)
 
         # ----- Planner -----
         # CHANGE #3: dùng RRT-Connect thay vì RRT (file planner.py cũ).
@@ -62,36 +65,36 @@ class Robot:
         # Lưu path gần nhất tìm được để dùng lại khi planner fail
         self.last_valid_path = None        # path 2D thành công gần nhất
         self.planner_fail_count = 0        # đếm số cycle liên tiếp planner fail
-        self.MAX_FAIL_BEFORE_STOP = 3      # quá ngưỡng -> dừng UAV
-        self.RRT_TIME_BUDGET_MS = 30       # time budget cho mỗi plan call
+        self.MAX_FAIL_BEFORE_STOP = MAX_FAIL_BEFORE_STOP    # (config)
+        self.RRT_TIME_BUDGET_MS = PLANNER_TIME_BUDGET_MS    # (config)
 
         # ─── Path commit parameters (chống flip-flop homotopy class) ───
         # Path đã commit chỉ replan khi cần thiết, không random mỗi cycle.
         self._committed_path = None              # path đang dùng (np.array Nx2)
         self._committed_goal = None              # goal lúc commit (cho check drift)
         self._commit_age = 0                     # số cycle đã dùng path này
-        self.MAX_COMMIT_AGE = 20                 # force replan sau N cycles (5s)
-        self.TARGET_REPLAN_THRESHOLD = 3.0       # target dịch > X m -> replan
-        self.PATH_DEVIATION_THRESHOLD = 5.0      # UAV lệch path > X m -> replan
+        self.MAX_COMMIT_AGE = MAX_COMMIT_AGE                        # (config)
+        self.TARGET_REPLAN_THRESHOLD = TARGET_REPLAN_THRESHOLD      # (config)
+        self.PATH_DEVIATION_THRESHOLD = PATH_DEVIATION_THRESHOLD    # (config)
 
         # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
         # UAV KHÔNG biết trajectory target. Chỉ đo position mỗi frame
         # qua sensor (giả định: vision/radar). Kalman filter estimate
         # velocity từ history -> predict future position.
-        self.USE_LEAD_PURSUIT = True             # bật/tắt lead pursuit
+        self.USE_LEAD_PURSUIT = USE_LEAD_PURSUIT                    # (config)
         self.target_tracker = KalmanTargetTracker(
             dt=TIMESTEP,
-            process_noise_std=2.0,    # target có thể tăng tốc tới 2 m/s²
-            obs_noise_std=0.3)        # sensor noise 0.3m
+            process_noise_std=KF_PROCESS_NOISE_STD,
+            obs_noise_std=KF_OBS_NOISE_STD)
 
         # Adaptive gain parameters
         # gain = clamp(1.0 - target_speed/VMAX, MIN_GAIN, MAX_GAIN)
         # target nhanh ~ UAV -> gain thấp (aim gần để không over-shoot)
         # target chậm     -> gain cao (aim xa để intercept hiệu quả)
-        self.LEAD_GAIN_MIN = 0.4
-        self.LEAD_GAIN_MAX = 1.0
+        self.LEAD_GAIN_MIN = LEAD_GAIN_MIN                          # (config)
+        self.LEAD_GAIN_MAX = LEAD_GAIN_MAX                          # (config)
         # Velocity uncertainty threshold - dưới đây thì TIN tracker
-        self.VELOCITY_TRUSTED_THRESHOLD = 1.5     # std velocity < 1.5 m/s thì dùng
+        self.VELOCITY_TRUSTED_THRESHOLD = VELOCITY_TRUSTED_THRESHOLD  # (config)
 
         # ─── 2-PHASE FORMATION: Mode state ───
         # SEARCH: no UAV sees target. All UAVs chase homogeneously.
@@ -118,7 +121,6 @@ class Robot:
         # ─── Lead pursuit: dự đoán vị trí target tại thời điểm UAV đến ───
         # Giải quyết: target di chuyển -> path "đuổi" target hiện tại sẽ
         # outdated khi UAV đến nơi. Cần aim trước.
-        self.USE_LEAD_PURSUIT = True             # bật/tắt lead pursuit
         self.LEAD_PURSUIT_GAIN = 1.0             # 1.0 = aim đúng predict
                                                   # 0.5 = aim giữa current và predict
                                                   # >1.0 = aim quá xa, aggressive
@@ -181,8 +183,8 @@ class Robot:
         # Fallback: nếu fail quá nhiều cycle -> emergency stop
         if self.traj_ref is None:
             # UAV dừng: control = 0, không update state qua MPC
-            print(f"[Robot {self.index}] Emergency stop "
-                  f"(fail count: {self.planner_fail_count})")
+            log.warning("[Robot %d] Emergency stop (fail count: %d)",
+                        self.index, self.planner_fail_count)
             self.list_A, self.list_b = [], []
             self.updateState(np.zeros(self.n_control), TIMESTEP)
             return
@@ -259,7 +261,7 @@ class Robot:
         # CBF chỉ áp khi self là LEADER trong TRACK mode
         if is_leader:
             slack_leader = opti.variable(HORIZON_LENGTH, 4)  # 4 hướng FOV
-            L = VIEWING_RADIUS/10
+            L = CBF_BOX_RATIO * VIEWING_RADIUS   # half side of the leader's CBF box
 
             for i in range(HORIZON_LENGTH):
                 cur_pos = opt_states[i, :2]
@@ -296,13 +298,7 @@ class Robot:
             con = opt_controls[i, :]
             opti.subject_to(ca.sumsqr(con) <= UMAX**2)
 
-        opts_setting = {'ipopt.max_iter': 10000,
-                        'ipopt.print_level': 0,
-                        'ipopt.tol': 1e-4,
-                        'ipopt.acceptable_tol': 1e-2,
-                        'print_time': 0,
-                        'ipopt.acceptable_iter': 15}
-        opti.solver('ipopt', opts_setting)
+        opti.solver('ipopt', dict(IPOPT_OPTIONS))
 
         # Cost function (2-phase formation)
         # Pass `robots` để truy cập satellites' states_prediction
@@ -334,8 +330,8 @@ class Robot:
             control = self.controls_prediction[0, :]
         except RuntimeError as e:
             # Solver fail (thường là infeasibility)
-            print(f"[Robot {self.index}] MPC solve failed at t={self.time_stamp:.2f}: "
-                  f"{type(e).__name__}")
+            log.warning("[Robot %d] MPC solve failed at t=%.2f: %s",
+                        self.index, self.time_stamp, type(e).__name__)
             # Fallback: dùng prediction shifted từ frame trước.
             # controls_prediction[0] là control gốc cho frame TIẾP của lần trước,
             # tức control bây giờ "lẽ ra" sẽ dùng. UAV vẫn theo plan cũ.
@@ -441,8 +437,15 @@ class Robot:
             self.last_valid_path  = None
         if not hasattr(self, 'planner') or self.planner is None:
             # map bền vững sống suốt vòng đời robot (KHÔNG tạo lại mỗi replan)
-            self.planner = JPSPlanner(world_bounds=(0, 0, 50, 15),
-                                      agent_id=self.index)
+            self.planner = JPSPlanner(world_bounds=WORLD_BOUNDS,
+                                      agent_id=self.index,
+                                      grid_resolution=GRID_RESOLUTION,
+                                      inflate_radius=INFLATE_RADIUS,
+                                      sensing_radius=SENSING_RADIUS,
+                                      start_snap_radius=START_SNAP_RADIUS,
+                                      goal_snap_radius=GOAL_SNAP_RADIUS,
+                                      goal_clamp_margin=GOAL_CLAMP_MARGIN,
+                                      n_ray_bins=GRID_RAY_BINS)
 
         # ── Nạp scan LiDAR vào map MỖI control-step (kể cả khi không replan) ──
         self.planner.observe(current_robot_pos, obstacle_points)
@@ -488,7 +491,7 @@ class Robot:
 
         # ── Replan nếu cần ──
         if need_replan:
-            # print(f"[Robot {self.index}] Replan: {reason}")
+            log.debug("[Robot %d] Replan: %s", self.index, reason)
             self.planner.initialize(tuple(current_robot_pos),
                                     tuple(current_goal_pos))
             # observe=False vì đã observe frame này ở trên rồi
@@ -507,8 +510,8 @@ class Robot:
 
             # Plan fail
             self.planner_fail_count += 1
-            print(f"[Robot {self.index}] JPS failed "
-                  f"(consecutive: {self.planner_fail_count}, reason was: {reason})")
+            log.warning("[Robot %d] JPS failed (consecutive: %d, reason was: %s)",
+                        self.index, self.planner_fail_count, reason)
 
             # Vẫn thử dùng committed_path nếu nó còn clear (check trên CÙNG grid)
             if self._committed_path is not None:
@@ -678,7 +681,7 @@ class Robot:
         if n == 0 or self.leader_current_pos is None:
             return 0.0
 
-        side = 5.6 * VIEWING_RADIUS
+        side = SLOT_SPACING_RATIO * VIEWING_RADIUS
         lead = np.asarray(self.leader_current_pos)
 
         # ── Tập slot ứng viên ──
@@ -832,9 +835,8 @@ class Robot:
         self.is_leader_role = False
         self.satellite_indices = [r.index for r in robots if r.index != self.leader_index]
 
-        if self.index == 1:   # debug 1 follower
-            print(f"[t={self.time_stamp:.1f}] fol{self.index} {self.mode} "
-                f"d2L={d2leader:.2f} enter={d_enter:.2f}")
+        log.debug("[t=%.1f] fol%d %s d2L=%.2f enter=%.2f",
+                  self.time_stamp, self.index, self.mode, d2leader, d_enter)
         return False
     
 
@@ -848,7 +850,7 @@ class Robot:
             b = b[0]
         A = np.asarray(A)
         b = np.asarray(b)
-        eps = 1e-1
+        eps = CORRIDOR_BARRIER_EPS
         for i in range(HORIZON_LENGTH):
             pos = traj[i, :2]
             d = b - ca.mtimes(A, pos.T) - ROBOT_RADIUS
@@ -881,7 +883,9 @@ class Robot:
             dist_guide = 0
             g = getattr(self, '_track_goal', self.goal)
             dist_goal = ca.sumsqr(traj[-1, :2] - g[:2].reshape(1, 2))
-            cost_tra += (dist_goal - (VIEWING_RADIUS - TAR_MAX_SPEED)**2)**2
+            # desired standoff = VIEWING_RADIUS - TAR_MAX_SPEED * STANDOFF_TIME (m);
+            # the old expression subtracted a speed from a length
+            cost_tra += (dist_goal - STANDOFF_DISTANCE**2)**2
         cost_gui += dist_guide**2
         return W_tra * cost_tra + W_gui * cost_gui
 
@@ -952,11 +956,11 @@ class Robot:
         """Create convex polygon using pydecomp"""
         if obstacle_points.shape[0] < 1:
             return [], []
-        box = np.array([[VIEWING_RADIUS, VIEWING_RADIUS]])
+        box = np.array([[CORRIDOR_BOX, CORRIDOR_BOX]])
         try:
             list_A, list_b = pdc.convex_decomposition_2D(
                 obstacle_points, path_ref[0:2], box)
             return list_A, list_b
         except Exception as e:
-            print(f"Error in generating safe corridor: {e}")
+            log.warning("[Robot %d] Error in generating safe corridor: %s", self.index, e)
             return [], []
