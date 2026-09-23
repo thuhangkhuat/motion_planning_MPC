@@ -5,8 +5,9 @@ import pydecomp as pdc
 
 from lidar import LidarScanner
 from utils import *
-# from planner_jps import JPSPlanner
 from planner_jps import JPSPlanner
+from planner_grid import LocalGridPlanner
+from mpc_problem import MPCProblem
 from kalman_target import KalmanTargetTracker
 
 from config import *
@@ -34,6 +35,17 @@ def _point_to_segment_distance(p, a, b):
     return float(np.linalg.norm(p - closest))
 
 
+def _MPC_CFG():
+    """Config constants used by MPCProblem (read at build time)."""
+    import config as _c
+    keys = ["HORIZON_LENGTH", "TIMESTEP", "ROBOT_RADIUS", "VMAX", "UMAX", "W_u", "W_gui",
+            "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
+            "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "W_leader_slack",
+            "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
+            "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
+    return {k: getattr(_c, k) for k in keys}
+
+
 class Robot:
     def __init__(self, index, state: np.array, goal: np.array, control=np.zeros(3)):
         # Robot state and control
@@ -53,7 +65,8 @@ class Robot:
         self.lidar = LidarScanner(range_min=LIDAR_RANGE_MIN, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi,
                                   resolution=LIDAR_ANGULAR_RES, noise=LIDAR_NOISE,
-                                  march_step=LIDAR_MARCH_STEP)
+                                  march_step=LIDAR_MARCH_STEP, mode=LIDAR_MODE)
+        self.mpc = None                 # MPCProblem, built on first use (parametric backend)
 
         # ----- Planner -----
         # CHANGE #3: dùng RRT-Connect thay vì RRT (file planner.py cũ).
@@ -186,12 +199,19 @@ class Robot:
             log.warning("[Robot %d] Emergency stop (fail count: %d)",
                         self.index, self.planner_fail_count)
             self.list_A, self.list_b = [], []
-            self.updateState(np.zeros(self.n_control), TIMESTEP)
+            # zero acceleration keeps the current velocity (the UAV coasts on);
+            # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
+            stop = self._brake_control() if FAILSAFE_BRAKE else np.zeros(self.n_control)
+            self.updateState(stop, TIMESTEP)
             return
 
         target_pos = self.goal[:3].reshape(1, 3)
         self.list_A, self.list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
         neighbor_robots = self.getNeighbors(robots)
+
+        if MPC_BACKEND == "parametric":
+            self._control_parametric(robots, neighbor_robots, target_pos)
+            return
 
         opti = ca.Opti()
         opt_states = opti.variable(HORIZON_LENGTH + 1, self.n_state)
@@ -328,6 +348,7 @@ class Robot:
             self.controls_prediction = sol.value(opt_controls)
             self.states_prediction = sol.value(opt_states)
             control = self.controls_prediction[0, :]
+            self.mpc_fail_streak = 0
         except RuntimeError as e:
             # Solver fail (thường là infeasibility)
             log.warning("[Robot %d] MPC solve failed at t=%.2f: %s",
@@ -335,7 +356,7 @@ class Robot:
             # Fallback: dùng prediction shifted từ frame trước.
             # controls_prediction[0] là control gốc cho frame TIẾP của lần trước,
             # tức control bây giờ "lẽ ra" sẽ dùng. UAV vẫn theo plan cũ.
-            control = self.controls_prediction[0, :]
+            control = self._fallback_control()
             # Lưu lại để debug audit
             if not hasattr(self, 'infeasible_log'):
                 self.infeasible_log = []
@@ -345,6 +366,88 @@ class Robot:
                 'goal': self.goal.copy(),
             })
 
+        self.updateState(control, TIMESTEP)
+
+    # ============================================================
+    # Parametric MPC backend (mpc_problem.py): same problem as the code above,
+    # built once and re-solved with new parameter values every step.
+    # ============================================================
+    def _brake_control(self):
+        """Acceleration that cancels the velocity as fast as UMAX allows."""
+        v = self.state[3:6]
+        u = -v / TIMESTEP
+        n = np.linalg.norm(u)
+        return u if n <= UMAX else u * (UMAX / n)
+
+    def _fallback_control(self):
+        """
+        Control when the MPC fails. The first MPC_FAILS_BEFORE_BRAKE consecutive
+        failures reuse the previous plan (shifted by one step); after that the
+        stale plan is no longer trusted and the UAV brakes. Without the brake,
+        repeated failures replay the last planned control indefinitely, which
+        drove UAVs into obstacles in the original code.
+        """
+        self.mpc_fail_streak = getattr(self, "mpc_fail_streak", 0) + 1
+        if FAILSAFE_BRAKE and self.mpc_fail_streak > MPC_FAILS_BEFORE_BRAKE:
+            return self._brake_control()
+        return self.controls_prediction[0, :]
+
+    def _control_parametric(self, robots, neighbor_robots, target_pos):
+        active_A = active_b = None
+        if self.list_A:
+            for A, b in zip(self.list_A, self.list_b):
+                if np.all(A @ self.state[:2] - b.flatten() <= 1e-5):
+                    active_A, active_b = A, b
+                    break
+            self.corridors.append({'A': active_A, 'b': active_b})
+
+        is_leader = self._update_mode_and_role(robots)
+        others = [r for r in robots if r.index != self.index]
+
+        A_cost = self.list_A[0] if self.list_A else None
+        b_cost = self.list_b[0] if self.list_b else None
+        faces = max(0 if active_b is None else len(active_b),
+                    0 if b_cost is None else len(b_cost))
+        if self.mpc is None or faces > self.mpc.n_faces:
+            n_faces = max(CORRIDOR_MAX_FACES, 16 * int(np.ceil(faces / 16)))
+            if self.mpc is not None:
+                log.info("[Robot %d] rebuilding MPC for %d corridor faces", self.index, n_faces)
+            self.mpc = MPCProblem(len(others), n_faces, _MPC_CFG())
+
+        w_search = w_slot = 0.0
+        slot = np.zeros(2)
+        if self.mode == MODE_SEARCH:
+            w_search = W_search_track
+        elif not is_leader:
+            s = self._slot_target(robots)
+            if s is not None:
+                slot, w_slot = s, W_sat_slot
+
+        guide = self.traj_ref is not None and len(self.traj_ref) > 2
+        ref = self.traj_ref[1, :2] if guide else np.zeros(2)
+        trk_goal = getattr(self, '_track_goal', self.goal)
+        nb_idx = {r.index for r in neighbor_robots}
+
+        ok, Xs, Us = self.mpc.solve(
+            x0=self.state,
+            A_hard=active_A, b_hard=active_b,
+            A_cost=A_cost, b_cost=b_cost, use_corr_cost=A_cost is not None,
+            others=[r.states_prediction for r in others],
+            nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
+            tgt=target_pos[0, :2], w_search=w_search, slot=slot, w_slot=w_slot,
+            leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
+            X_init=self.states_prediction, U_init=self.controls_prediction)
+        if ok:
+            self.states_prediction, self.controls_prediction = Xs, Us
+            control = Us[0, :]
+            self.mpc_fail_streak = 0
+        else:
+            log.warning("[Robot %d] MPC solve failed at t=%.2f", self.index, self.time_stamp)
+            control = self._fallback_control()
+            if not hasattr(self, 'infeasible_log'):
+                self.infeasible_log = []
+            self.infeasible_log.append({'t': self.time_stamp, 'state': self.state.copy(),
+                                        'goal': self.goal.copy()})
         self.updateState(control, TIMESTEP)
 
     # ============================================================
@@ -437,7 +540,16 @@ class Robot:
             self.last_valid_path  = None
         if not hasattr(self, 'planner') or self.planner is None:
             # map bền vững sống suốt vòng đời robot (KHÔNG tạo lại mỗi replan)
-            self.planner = JPSPlanner(world_bounds=WORLD_BOUNDS,
+            if PLANNER == "local":
+                self.planner = LocalGridPlanner(
+                    world_bounds=WORLD_BOUNDS, agent_id=self.index,
+                    grid_resolution=GRID_RESOLUTION, inflate_radius=INFLATE_RADIUS,
+                    sensing_radius=SENSING_RADIUS, local_radius=LOCAL_PLAN_RADIUS,
+                    unknown_policy=UNKNOWN_POLICY, unknown_cost=UNKNOWN_COST,
+                    start_snap_radius=START_SNAP_RADIUS,
+                    goal_clamp_margin=GOAL_CLAMP_MARGIN, n_ray_bins=GRID_RAY_BINS)
+            else:
+                self.planner = JPSPlanner(world_bounds=WORLD_BOUNDS,
                                       agent_id=self.index,
                                       grid_resolution=GRID_RESOLUTION,
                                       inflate_radius=INFLATE_RADIUS,
@@ -667,6 +779,16 @@ class Robot:
     # SATELLITE costs (chỉ áp khi self là satellite trong TRACK)
     # ============================================================
     def costSatelliteSlotDynamic(self, opt_states, robots):
+        slot = self._slot_target(robots)
+        if slot is None:
+            return 0.0
+        target_xy = ca.DM([slot[0], slot[1]])
+        cost = 0
+        for k in range(HORIZON_LENGTH + 1):
+            cost += ca.sumsqr(opt_states[k, :2].T - target_xy)
+        return W_sat_slot * cost
+
+    def _slot_target(self, robots):
         """
         Gán slot ĐỘNG mỗi cycle bằng Hungarian (follower × slot), có hysteresis
         chống lật. Square-FOV: slot = ô lưới cách leader bội số 2L, axis-locked.
@@ -679,7 +801,7 @@ class Robot:
         """
         n = len(self.satellite_indices)
         if n == 0 or self.leader_current_pos is None:
-            return 0.0
+            return None
 
         side = SLOT_SPACING_RATIO * VIEWING_RADIUS
         lead = np.asarray(self.leader_current_pos)
@@ -695,7 +817,7 @@ class Robot:
         sats = sorted(self.satellite_indices)
         pos_of = {r.index: r.state[:2] for r in robots if r.index in self.satellite_indices}
         if self.index not in pos_of:
-            return 0.0
+            return None
 
         # ── Ma trận chi phí n×m (m >= n) ──
         C = np.array([[float(np.linalg.norm(pos_of[i] - slot_pos[j]))
@@ -728,11 +850,7 @@ class Robot:
         # ── Cost kéo self về slot của nó ──
         dx, dy = cells[new_assign[self.index]]
         self.my_slot_cell = (dx, dy)
-        target_xy = ca.DM([lead[0] + dx * side, lead[1] + dy * side])
-        cost = 0
-        for k in range(HORIZON_LENGTH + 1):
-            cost += ca.sumsqr(opt_states[k, :2].T - target_xy)
-        return W_sat_slot * cost
+        return np.array([lead[0] + dx * side, lead[1] + dy * side])
     # ============================================================
     # Cost slack cho leader visibility
     # ============================================================

@@ -31,7 +31,8 @@ VFOV = 90
 LIDAR_RANGE_MIN = 0.1          # (m)
 LIDAR_ANGULAR_RES = np.pi / 90 # 2 deg per ray (rad)
 LIDAR_NOISE = 0.01             # uniform range noise amplitude (m)
-LIDAR_MARCH_STEP = 0.1         # ray-marching step for circular obstacles (m)
+LIDAR_MARCH_STEP = 0.1         # ray-marching step for circular obstacles (m, mode "march")
+LIDAR_MODE = "analytic"        # "analytic" (exact, vectorised) | "march" (original)
 
 # ─── Occupancy grid + JPS planner ───
 GRID_RESOLUTION = 0.5          # cell size (m)
@@ -42,12 +43,20 @@ START_SNAP_RADIUS = 10.0       # search radius to move a blocked start to a free
 GOAL_SNAP_RADIUS = 30.0        # search radius to move a blocked goal to a free cell (m)
 GOAL_CLAMP_MARGIN = 2.0        # goals outside the world are clamped this far inside (m)
 PLANNER_TIME_BUDGET_MS = 30    # passed to the planner (JPS currently ignores it)
+PLANNER = "local"              # "local" (planner_grid.py) | "jps" (original, whole grid)
+LOCAL_PLAN_RADIUS = 100.0      # half size of the planning window around the UAV (m)
+UNKNOWN_POLICY = "blocked"     # "blocked": unseen cells cannot be entered
+                               # "optimistic": unseen cells cost UNKNOWN_COST x a free step
+UNKNOWN_COST = 1.0
 
 # ─── Path commit / replanning ───
 MAX_COMMIT_AGE = 20            # force a replan after this many cycles
 TARGET_REPLAN_THRESHOLD = 3.0  # replan if the (predicted) target moved more than this (m)
 PATH_DEVIATION_THRESHOLD = 5.0 # replan if the UAV is farther than this from its path (m)
 MAX_FAIL_BEFORE_STOP = 3       # consecutive planner failures before an emergency stop
+FAILSAFE_BRAKE = True          # emergency stop / repeated MPC failure -> brake at UMAX
+                               # (False = original: zero acceleration, i.e. keep flying)
+MPC_FAILS_BEFORE_BRAKE = 1     # consecutive MPC failures that still reuse the old plan
 
 # ─── Target estimation (Kalman) + lead pursuit ───
 KF_PROCESS_NOISE_STD = 2.0     # unmodelled target acceleration (m/s^2)
@@ -87,6 +96,12 @@ W_slack = 2.0
 W_col = 1.0
 W_form_dist = 1.0
 W_sat_slot = 1.0
+
+# ─── MPC implementation / cost scaling ───
+MPC_BACKEND = "parametric"     # "parametric" (built once, mpc_problem.py) | "rebuild" (original)
+CORRIDOR_MAX_FACES = 16        # corridor faces the parametric MPC is built for (grows if needed)
+COST_LENGTH_SCALE = 1.0        # distances enter the cost divided by this (m); 1 = original cost
+COST_ACCEL_SCALE = 1.0         # controls enter the cost divided by this (m/s^2); 1 = original
 
 # ─── IPOPT ───
 IPOPT_OPTIONS = {
@@ -152,494 +167,148 @@ SWITCH_MARGIN_RATIO = 0.5      # SWITCH_MARGIN = ratio * VIEWING_RADIUS (derived
 OPEN_ALL_SLOTS = False
 
 # ============================================================
-# 2. SCENARIOS 
+# 2. SCENARIOS
+# ------------------------------------------------------------
+# Scenarios live in scenarios/*.yaml (see scenarios/README.md).
+#     python main.py --scenario 6          -> scenarios/scen6.yaml
+#     python main.py --scenario big1000    -> scenarios/big1000.yaml
+# Points picked with pick_waypoints.py (target waypoints / speeds,
+# UAV starts) are stored next to it in <name>.picks.json and
+# override the YAML values.
 # ============================================================
+NUMBER_RUN = 1
+METHOD = 2
+if __name__ == "__main__" and len(__import__("sys").argv) > 1:    # python config.py <scenario>
+    os.environ["SCENARIO"] = __import__("sys").argv[1]
+SCENARIO = os.environ.get("SCENARIO", "9")
+SCENARIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenarios")
+START_ALTITUDE = 3.0           # z used when a start is given as [x, y]
 
-#     python main.py --scenario 3          (or SCENARIO=3 python main.py)
-#     python plot_scenario.py 3 --traj
-NUMBER_RUN=1
-METHOD = 2  
-SCENARIO = int(os.environ.get("SCENARIO", 9))
 
-SCENARIOS = {
+def scenario_path(name):
+    """scenarios/scen<name>.yaml for numbers, scenarios/<name>.yaml otherwise."""
+    name = str(name)
+    cands = [f"scen{name}.yaml", f"{name}.yaml", name]
+    for c in cands:
+        p = c if os.path.isabs(c) else os.path.join(SCENARIO_DIR, c)
+        if os.path.isfile(p):
+            return p
+    raise ValueError(f"Scenario '{name}' not found in {SCENARIO_DIR}. "
+                     f"Available: {list_scenarios()}")
 
-    # ────────────────────────────────────────────────────────
-    # Scenario 1:
-    # ────────────────────────────────────────────────────────
-    1: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 6, 3.],
-            [10, 2, 3.],
-        ]),
-        rects=
-        [
-            [7, 7, 2.5, 1.5],
-            [20, 2, 1.5, 2.5],
-            [26, 0.5, 2, 2],
-            [37, 6, 2, 2.5],
-        ],
-        circles=[
-                 [14, 8.5, 1],
-                #  [46, 1.5, 1],
-                 [30, 6, 1],
-                #  [43, 7, 1],
-                 [15, 2, 1],
-                 [2.5, 5.5, 1],
-                #  [36, 2.3, 0.75],
-                #  [23, 8, 0.75],
-                 ],
-        xlim=[0, 50],
-        ylim=[0, 10],
 
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
+def list_scenarios():
+    if not os.path.isdir(SCENARIO_DIR):
+        return []
+    names = [f[:-5] for f in sorted(os.listdir(SCENARIO_DIR)) if f.endswith(".yaml")]
+    return [n[4:] if n.startswith("scen") and n[4:].isdigit() else n for n in names]
 
-    2: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            # [10, 6, 3.],
-            # [10, 2, 3.],
-        ]),
-        rects=
-        [
-            [7, 7, 2.5, 1.5],
-            [20, 2, 1.5, 2.5],
-            [26, 0.5, 2, 2],
-            [37, 6, 2, 2.5],
-            [2.3, 7.5, 2, 2],
-            [30, 8, 2.5, 1.2],
-            [16, 0.5, 3, 1.2],
-            [1, 2.0, 1.2, 3],
-            [23.4, 6.6,0.8,0.8],
-            [8.8, 2.8, 0.8, 0.8]
-        ],
-        circles=[
-                 [14, 8.5, 1],
-                 [30, 6, 1],
-                 [16, 3.7, 0.75],
-                 [4.5, 5.5, 1],
-                 [20, 8, 0.6],
-                 [33.5, 1.9, 0.7],
-                 [13.5, 1.6, 0.8],
-                 [26, 8.75, 0.8],
-                 [23.3, 2.2, 0.8],
-                 [33.6, 6.8, 0.75],
 
-                 ],
-        xlim=[-2, 51],
-        ylim=[-1, 11],
+def picks_path(name):
+    return scenario_path(name)[:-5] + ".picks.json"
 
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
 
-    3: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [14, 1, 3.],
-            [2, 8, 3.],
-        ]),
-        rects=[
-             [3.5, 4.2, 1.5, 1.5],
-             [15.2, 3.3, 2.5, 1.5],
-             [20, 2, 2, 2],
-             [40, 5.8, 1.5, 2.5],
-        ],
-        circles=[
-                 [10, 2, 1],
-                 [11.3, 8.0, 0.75],
-                 [25.4, 8.75, 1],
-                 [32, 6, 0.85],
-                 [27, 2, 1],
-                 [45, 2.5, 1],
-                 ],
-        xlim=[0, 50],
-        ylim=[0, 10],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.2,
-            ),
-        
-    ),
-
-    4: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [14, 1, 3.],
-            [2, 8, 3.],
-        ]),
-        rects=[
-             [3.5, 4.2, 1.5, 1.5],
-             [15.2, 4.0, 2.5, 1.5],
-             [20, 2, 2, 2],
-             [40, 5.8, 1.5, 2.5],
-             [35, 7.5, 2, 2],
-             [29, 8.0, 2.5, 1],
-             [35, 0.9, 2.5, 1.5],
-        ],
-        circles=[
-                 [10, 2, 1],
-                 [11.3, 8.0, 0.75],
-                 [25.4, 8.75, 1],
-                 [32, 6, 0.85],
-                 [27, 2, 1],
-                 [45, 2.5, 1],
-                 [18, 8.2, 0.75],
-                 [15.9, 2, 0.85]
-
-                 ],
-        xlim=[-1, 51],
-        ylim=[-1, 11],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.2,
-            ),
-        
-    ),
-
-    5: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 8, 3.],
-            [11, 2, 3.],
-            [1.5, 6, 3.],
-        ]),
-        rects=[
-            [5, 0.5, 1.5, 1.5],
-            [16, 8.5, 2.5, 1],
-            [24, 1.0, 2, 2],
-            [30, 6, 1.5, 2.5],
-            # [2, 7.5, 2, 2],
-            # [32, 7, 2, 2],
-        ],
-        circles=[
-                  [6.5, 6.0, 0.75],
-                  [18, 4, 1],
-                  [39, 6, 1],
-                #  [4.5, 5.5, 1],
-                #  [20, 7.4, 0.75],
-                #  [46, 1.5, 1],
-                #  [43, 7, 1],
-                #  [35, 2.5, 0.75],
-                 ],
-        xlim=[0, 50],
-        ylim=[0, 10],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
-
-    6: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 8, 3.],
-            [11, 2, 3.],
-            [1.5, 6, 3.],
-        ]),
-        rects=[
-            [5, 0.5, 1.5, 1.5],
-            [16, 8.5, 2.5, 1],
-            [24, 1.0, 2, 2],
-            [30, 6, 1.5, 2.5],
-            [2.5, 7.7, 2.5, 1.5],
-            [14.2, 1.0, 2.5, 1.5],
-            [34, 7.2, 2, 2],
-            [3, 4.3, 1.5, 1.5]
-        ],
-        circles=[
-                  [6.5, 6.0, 0.75],
-                  [18, 4, 1],
-                  [39, 6, 1],
-                  [27.0, 8.5, 0.85],
-                  [33, 1.8, 0.65],
-                  [21.3, 2.7, 0.75],
-                  [34, 5.8, 0.65],
-                  [23.9, 6.9, 0.55],
-                 ],
-        xlim=[-1, 51],
-        ylim=[-1, 11],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
-
-    7: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 8, 3.],
-            [11, 2, 3.],
-            [1.5, 6, 3.],
-            [5, 8.5, 3.]
-        ]),
-        rects=[
-            [16.3, 2.5, 1.5, 1.5],
-            [24, 8.0, 2.5, 1.5],
-            [31.8, 5.2, 1.5, 2.5],
-        ],
-        circles=[
-                  [5.4, 5.8, 0.75],
-                  [24, 2.4, 1],
-                  [39, 6, 0.85],
-                  [42.0, 2, 0.55],
-                 ],
-        xlim=[0, 50],
-        ylim=[0, 10],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
-
-    8: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 8, 3.],
-            [11, 2, 3.],
-            [1.5, 6, 3.],
-            [5, 8.5, 3.]
-        ]),
-        rects=[
-            [17, 3, 2, 2],
-            [24, 8.0, 2.5, 1.5],
-            [31.8, 5.2, 1.5, 2.5],
-            [13, 0.5, 2.5, 1.2],
-            [5, 0.5, 1, 1],
-            [40, 8, 2.5, 1.5],
-            [7, 8.5, 2, 1],
-        ],
-        circles=[
-                  [5.4, 5.8, 0.75],
-                  [24, 2.6, 1],
-                  [39, 6, 0.85],
-                  [42.0, 2, 0.75],
-                  [1.85, 8.6, 0.75],
-                  [33.4, 9.5, 0.85],
-                  [20, 1.88, 0.75]
-
-                 ],
-        xlim=[-1, 51],
-        ylim=[-1, 11],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
-
-    9: dict(
-        tar_max_speed=1,
-        viewing_radius=1.5,
-        waypoints=[
-            np.array([4.0, 2.2, 0]),
-            np.array([18, 7.0, 0]),
-            np.array([33, 3, 0]),
-            np.array([47, 5.5, 0]),
-        ],
-        starts=np.array([
-            [3, 2, 3.],
-            [10, 8, 3.],
-            [11, 2, 3.],
-            [1.5, 6, 3.],
-            [5, 8.5, 3.]
-        ]),
-        rects=[
-            # [17, 3, 2, 2],
-            # [24, 8.0, 2.5, 1.5],
-            # [31.8, 5.2, 1.5, 2.5],
-            # [13, 0.5, 2.5, 1.2],
-            # [5, 0.5, 1, 1],
-            # [40, 8, 2.5, 1.5],
-            # [7, 8.5, 2, 1],
-        ],
-        circles=[
-                #   [5.4, 5.8, 0.75],
-                #   [24, 2.6, 1],
-                #   [39, 6, 0.85],
-                #   [42.0, 2, 0.75],
-                #   [1.85, 8.6, 0.75],
-                #   [33.4, 9.5, 0.85],
-                #   [20, 1.88, 0.75]
-
-                 ],
-        xlim=[-1, 51],
-        ylim=[-1, 11],
-
-            params=dict(                    # (optional)
-                W_slack=2.0,
-                W_col=1.0,
-                W_form_dist=1.0,
-                W_sat_slot = 1.0,
-            ),
-        
-    ),
-   
-   
-
-    # ────────────────────────────────────────────────────────
-    # TEMPLATE
-    # ────────────────────────────────────────────────────────
-    # 4: dict(
-    #     tar_max_speed=2,
-    #     viewing_radius=5,
-    #     waypoints=[
-    #         np.array([x, y, 0]),
-    #         ...
-    #     ],
-    #     starts=np.array([
-    #         [x, y, 3.],
-    #         ...
-    #     ]),
-    #     rects=[[x, y, w, h], ...],    
-    #     circles=[[cx, cy, r], ...],    
-    #     xlim=[0, 50],
-    #     ylim=[0, 50],
-    #     params=dict(                   
-    #         W_sat_angle=5.0,
-    #         W_collision_avoid=2.0,
-    #         K_OUT_THRESHOLD=15,
-    #     ),
-    # ),
-}
-
+def load_scenario(name):
+    """Raw scenario dict (YAML) with <name>.picks.json merged in."""
+    import json
+    import yaml
+    path = scenario_path(name)
+    with open(path, encoding="utf-8") as f:
+        d = yaml.safe_load(f) or {}
+    d.setdefault("target", {})
+    d.setdefault("obstacles", {})
+    d["_file"] = path
+    d["_picks"] = None
+    picks = path[:-5] + ".picks.json"
+    legacy = os.path.join(SCENARIO_DIR, f"target_scen{name}.json")   # older picker format
+    if os.path.isfile(picks):
+        with open(picks, encoding="utf-8") as f:
+            p = json.load(f)
+        if p.get("target", {}).get("waypoints"):
+            d["target"]["waypoints"] = p["target"]["waypoints"]
+            d["target"]["speeds"] = p["target"].get("speeds")
+        if p.get("starts"):
+            d["starts"] = p["starts"]
+        d["_picks"] = picks
+    elif os.path.isfile(legacy):
+        with open(legacy, encoding="utf-8") as f:
+            p = json.load(f)
+        d["target"]["waypoints"] = p["waypoints"]
+        d["target"]["speeds"] = p.get("speeds")
+        d["_picks"] = legacy
+    return d
 
 
 # ============================================================
 # 3. EXPORT
 # ============================================================
-
-if SCENARIO not in SCENARIOS:
-    raise ValueError(
-        f"SCENARIO = {SCENARIO} does not exist. "
-        f"Available scenarios: {sorted(SCENARIOS.keys())}")
-
-_s = SCENARIOS[SCENARIO]
+_s = load_scenario(SCENARIO)
+SCENARIO_NAME = os.path.basename(_s["_file"])[:-5]      # e.g. "scen6", "big1000"
 
 # ─── Per-scenario parameter overrides ───
-_overrides = _s.get('params', {})
+_overrides = _s.get('params') or {}
 globals().update(_overrides)
+
+# Environment
+VIEWING_RADIUS = float(_s['viewing_radius'])
+XLIM = [float(v) for v in _s['xlim']]
+YLIM = [float(v) for v in _s['ylim']]
 
 # Target
 TAR_MAX_SPEED = _s['tar_max_speed']
-TAR_WAYPOINTS = _s['waypoints']
-
-# Environment
-VIEWING_RADIUS = _s['viewing_radius']
-XLIM = _s['xlim']
-YLIM = _s['ylim']
+TAR_WAYPOINTS = [np.array(list(w) + [0.0] * (3 - len(w)), dtype=float)
+                 for w in _s['target'].get('waypoints', [])]
+TAR_SPEEDS = (np.asarray(_s['target']['speeds'], float)
+              if _s['target'].get('speeds') else None)
 
 # UAV
-STARTS = _s['starts']
+STARTS = np.array([list(p) + [START_ALTITUDE] * (3 - len(p)) for p in _s['starts']],
+                  dtype=float)
 NUM_ROBOT = STARTS.shape[0]
-GOALS = STARTS + np.array([21., 0., 0.])
+# Robot.goal is overwritten with the target position every step; the initial
+# value only matters before the first update.
+GOALS = STARTS.copy()
 
-RECTANGLE_OBSTACLES = [np.array(r, dtype=float) for r in _s['rects']]
+# Obstacles: explicit ones from the file + generated ones (map_gen.py)
+_rects = [list(map(float, r)) for r in (_s['obstacles'].get('rects') or [])]
+_circles = [list(map(float, c)) for c in (_s['obstacles'].get('circles') or [])]
+GENERATION_STATS = None
+if _s.get('generate'):
+    from map_gen import generate_obstacles
+    from geometry import catmull_rom
+    _keep = [p[:2] for p in STARTS] + [w[:2] for w in TAR_WAYPOINTS]
+    # the path that path_clearance protects = the path the target will follow
+    _tpath = np.array([w[:2] for w in TAR_WAYPOINTS]).reshape(-1, 2)
+    if TAR_SMOOTH_ENABLE and len(_tpath) >= 3:
+        _tpath = catmull_rom(_tpath, TAR_SPLINE_DS)[0]
+    _rects, _circles, GENERATION_STATS = generate_obstacles(
+        _s['generate'], XLIM, YLIM, keep_clear_points=_keep,
+        fixed_rects=_rects, fixed_circles=_circles,
+        target_path=_tpath)
 
+RECTANGLE_OBSTACLES = [np.array(r, dtype=float) for r in _rects]
 POLYGON_OBSTACLES = [
     np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]])
-    for (x, y, w, h) in _s['rects']
+    for (x, y, w, h) in _rects
 ]
-
-_circles = _s.get('circles', [])
 OBSTACLES = np.array(_circles, dtype=float) if _circles else np.array([])
+
+# Resolved scenario (what the simulation actually uses) -> run snapshot, plots
+SCENARIO_DEF = {
+    "name": SCENARIO_NAME,
+    "file": _s["_file"],
+    "picks_file": _s["_picks"],
+    "description": _s.get("description", ""),
+    "xlim": XLIM, "ylim": YLIM,
+    "viewing_radius": VIEWING_RADIUS,
+    "tar_max_speed": TAR_MAX_SPEED,
+    "waypoints": [w.tolist() for w in TAR_WAYPOINTS],
+    "speeds": None if TAR_SPEEDS is None else TAR_SPEEDS.tolist(),
+    "starts": STARTS.tolist(),
+    "rects": _rects, "circles": _circles,
+    "generate": _s.get("generate"),
+    "params": dict(_overrides),
+}
 
 
 # ─── Derived parameters ───
@@ -763,6 +432,38 @@ def validate_config():
     add("INFO", f"Grid: {cells:,} cells per UAV "
                 f"({cells * 5 * NUM_ROBOT / 1e6:.0f} MB for {NUM_ROBOT} UAVs).")
 
+    # ── Planner / MPC implementation ──
+    if PLANNER == "local":
+        if LOCAL_PLAN_RADIUS < SENSING_RADIUS:
+            add("WARNING", f"LOCAL_PLAN_RADIUS={LOCAL_PLAN_RADIUS} m < SENSING_RADIUS="
+                           f"{SENSING_RADIUS} m: the planner ignores part of what the LiDAR sees.")
+        span = max(xmax - xmin, ymax - ymin)
+        if UNKNOWN_POLICY == "blocked" and span > 2 * LOCAL_PLAN_RADIUS:
+            add("WARNING", "UNKNOWN_POLICY='blocked' on a map larger than the planning "
+                           "window: a target far outside the explored area can only be "
+                           "approached, not planned to. Use 'optimistic' on large maps.")
+        side = 2 * int(np.ceil(LOCAL_PLAN_RADIUS / GRID_RESOLUTION)) + 1
+        nx = int(np.ceil((xmax - xmin) / GRID_RESOLUTION)) + 1
+        ny = int(np.ceil((ymax - ymin) / GRID_RESOLUTION)) + 1
+        add("INFO", f"Local planning window: {min(side, nx) * min(side, ny):,} cells"
+                    + (" (covers the whole map)" if side >= max(nx, ny) else "") + ".")
+        try:
+            import numba  # noqa: F401
+        except ImportError:
+            add("WARNING", "numba is not installed: the local planner runs in pure Python "
+                           "(10-100x slower). pip install numba")
+    elif PLANNER == "jps":
+        cells_ = np.ceil((xmax - xmin) / GRID_RESOLUTION + 1) * np.ceil((ymax - ymin) / GRID_RESOLUTION + 1)
+        if cells_ > 50_000:
+            add("WARNING", f"PLANNER='jps' rebuilds a graph over all {int(cells_):,} cells on "
+                           f"every replan (seconds per replan). Use PLANNER='local'.")
+    else:
+        add("ERROR", f"Unknown PLANNER={PLANNER!r} (use 'local' or 'jps').")
+    if MPC_BACKEND not in ("parametric", "rebuild"):
+        add("ERROR", f"Unknown MPC_BACKEND={MPC_BACKEND!r}.")
+    if UNKNOWN_POLICY not in ("blocked", "optimistic"):
+        add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
+
     # ── Target ──
     if TAR_MAX_SPEED >= VMAX:
         add("WARNING", f"TAR_MAX_SPEED={TAR_MAX_SPEED} >= VMAX={VMAX}: UAVs cannot catch up.")
@@ -796,7 +497,25 @@ def validate_config():
         for i in np.flatnonzero(d <= c[2] + ROBOT_RADIUS):
             add("ERROR", f"UAV {i} starts inside circle obstacle {c.tolist()}.")
 
-    gap = _min_obstacle_gap(_s['rects'], _circles)
+    if len(TAR_WAYPOINTS) < 2:
+        add("ERROR", "The target needs at least 2 waypoints.")
+    elif os.environ.get("TARGET_MODE", "manual") == "manual":
+        from target_manual import check_path
+        _tp = np.array([w[:2] for w in TAR_WAYPOINTS])
+        if TAR_SMOOTH_ENABLE and len(_tp) >= 3:
+            from geometry import catmull_rom
+            _tp = catmull_rom(_tp, TAR_SPLINE_DS)[0]
+        _bad = check_path(_tp, TAR_RADIUS + SAFETY_MARGIN)
+        if _bad:
+            add("WARNING", f"Target path is closer than TAR_RADIUS + SAFETY_MARGIN = "
+                           f"{TAR_RADIUS + SAFETY_MARGIN:.2f} m to an obstacle in {len(_bad)} "
+                           f"place(s), worst clearance {min(b[2] for b in _bad):.2f} m. "
+                           f"Fix with pick_waypoints.py.")
+    if GENERATION_STATS is not None and not GENERATION_STATS["reached_density"]:
+        add("WARNING", "map_gen could not reach the requested density "
+                       "(raise max_tries or lower min_gap / density).")
+
+    gap = _min_obstacle_gap(_rects, _circles)
     if gap is not None:
         passable = 2 * eff_inflate + GRID_RESOLUTION
         level = "INFO" if gap >= passable else "WARNING"
@@ -806,7 +525,7 @@ def validate_config():
 
 
 if __name__ == "__main__":
-    print(f"Scenario {SCENARIO}: {NUM_ROBOT} UAV, world {WORLD_BOUNDS}, "
+    print(f"Scenario {SCENARIO_NAME}: {NUM_ROBOT} UAV, world {WORLD_BOUNDS}, "
           f"horizon reach {VMAX * HORIZON_LENGTH * TIMESTEP:.2f} m")
     for level, msg in validate_config():
         print(f"[{level}] {msg}")

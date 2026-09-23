@@ -1,0 +1,78 @@
+# 1000 m x 1000 m example with a seeded random map.
+# Units: metres, m/s. See scenarios/README.md for every key.
+#
+# Physical parameters are scaled for a field-size map. They are a starting
+# point, not a tuned set: run `python config.py big1000` after every change.
+
+description: 1000 m field, 5 UAVs, random obstacles (seed 7)
+xlim: [0, 1000]
+ylim: [0, 1000]
+viewing_radius: 15        # half side of the camera footprint (m)
+tar_max_speed: 5          # target speed (m/s)
+
+starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
+- [40, 40, 30]
+- [70, 40, 30]
+- [40, 70, 30]
+- [70, 70, 30]
+- [55, 100, 30]
+
+target:
+  waypoints:              # edit with pick_waypoints.py (key t)
+  - [100, 100]
+  - [450, 180]
+  - [850, 150]
+  - [900, 550]
+  - [600, 850]
+  - [200, 800]
+  # speeds: [5, 5, 3, 5, 5]   # optional, one per segment
+
+obstacles:                # fixed obstacles, added before the random ones
+  rects: []               # [x, y, w, h]
+  circles: []             # [cx, cy, r]
+
+generate:
+  seed: 7
+  density: 0.08           # fraction of the map covered by obstacles
+  rect_size: [20, 60]     # side length range (m)
+  circle_radius: [10, 25] # radius range (m)
+  circle_fraction: 0.4
+  min_gap: 15             # clearance between obstacles (m)
+  border_margin: 10       # keep obstacles off the map border (m)
+  keep_clear_radius: 40   # free zone around UAV starts and target waypoints (m)
+  path_clearance: 12      # free corridor along the target segments (m); 0 = off
+
+params:
+  # ─── Dynamics / MPC ───
+  TIMESTEP: 0.1
+  HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m
+  VMAX: 10
+  UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
+  ROBOT_RADIUS: 1.0         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
+  CORRIDOR_BOX: 25          # >= horizon reach
+  CORRIDOR_BARRIER_EPS: 1.0
+  COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost
+  # ─── Sensing ───
+  SENSING_RADIUS: 50
+  SENSING_NEIGHBOR: 45      # >= 2 * reach + 2R
+  LIDAR_RANGE_MIN: 0.5
+  LIDAR_NOISE: 0.05
+  LIDAR_MARCH_STEP: 0.5
+  # ─── Occupancy grid / planner ───
+  GRID_RESOLUTION: 2.0      # ray spacing at 50 m is 1.75 m < 2 m
+  INFLATE_MARGIN: 1.0       # INFLATE_RADIUS = 2 m
+  START_SNAP_RADIUS: 20
+  GOAL_SNAP_RADIUS: 100       # (JPS planner only)
+  GOAL_CLAMP_MARGIN: 10
+  PLANNER: local
+  LOCAL_PLAN_RADIUS: 150      # planning window half size (m) -> 151 x 151 cells
+  UNKNOWN_POLICY: optimistic  # the target is usually far outside what the UAV has seen
+  UNKNOWN_COST: 1.5           # prefer known-free space when it is not much longer
+  TARGET_REPLAN_THRESHOLD: 15
+  PATH_DEVIATION_THRESHOLD: 20
+  # ─── Target estimation / target path ───
+  KF_OBS_NOISE_STD: 1.0
+  TAR_RADIUS: 1.0
+  SAFETY_MARGIN: 3.0
+  TAR_SPLINE_DS: 2.0
+  TARGET_ARRIVAL_TOL: 1.0

@@ -55,7 +55,8 @@ def _ray_rect_intersection(ox, oy, dx, dy, rect):
 class LidarScanner:
     def __init__(self, range_min=0.1, range_max=100.0,
                  angle_min=-math.pi/2, angle_max=math.pi/2,
-                 resolution=math.pi/90, noise=0.01, march_step=0.1):
+                 resolution=math.pi/90, noise=0.01, march_step=0.1,
+                 mode="analytic"):
         self.range_min = range_min
         self.range_max = range_max
         self.angle_min = angle_min
@@ -65,6 +66,14 @@ class LidarScanner:
         # number of ray-marching samples for circular obstacles
         self.range_num = int(round(range_max / march_step))
         self.noise = noise
+        # "analytic": exact ray-circle / ray-box intersection, vectorised over rays
+        #             and obstacles (fast, works for any number of obstacles)
+        # "march"   : original ray-marching for circles (kept for comparisons)
+        self.mode = mode
+        self._rects = (np.asarray(RECTANGLE_OBSTACLES, float).reshape(-1, 4)
+                       if len(RECTANGLE_OBSTACLES) else np.zeros((0, 4)))
+        self._circles = (np.asarray(OBSTACLES, float).reshape(-1, 3)
+                         if OBSTACLES.size else np.zeros((0, 3)))
 
     def distance(self, pose, obs_pose):
         ex = obs_pose[0] - pose[0]
@@ -94,6 +103,74 @@ class LidarScanner:
         return rects
 
     def senseObstacle(self, pose, robots):
+        if self.mode == "analytic":
+            return self._sense_analytic(pose)
+        return self._sense_march(pose, robots)
+
+    def _sense_analytic(self, pose):
+        """
+        Same output as the ray-marching version: (angles, ranges) of the rays
+        that hit something within range_max, with uniform noise added.
+        Circles: exact entry distance (ray-marching reported the first sample
+        inside, up to one march step later).
+        """
+        x, y = float(pose[0]), float(pose[1])
+        angles = np.linspace(self.angle_min + pose[2], self.angle_max + pose[2],
+                             self.angle_num, True)
+        dx, dy = np.cos(angles), np.sin(angles)
+        best = np.full(self.angle_num, np.inf)
+        rmin, rmax = self.range_min, self.range_max
+
+        C = self._circles
+        if len(C):
+            C = C[np.hypot(C[:, 0] - x, C[:, 1] - y) < rmax + C[:, 2]]
+        if len(C):
+            ox, oy = x - C[:, 0], y - C[:, 1]                       # (M,)
+            b = dx[:, None] * ox[None, :] + dy[:, None] * oy[None, :]   # (n, M)
+            c = ox ** 2 + oy ** 2 - C[:, 2] ** 2                     # (M,)
+            disc = b ** 2 - c[None, :]
+            sq = np.sqrt(np.maximum(disc, 0))
+            t_in, t_out = -b - sq, -b + sq
+            # first point at distance >= range_min that lies inside the circle
+            t = np.where(t_in >= rmin, t_in, np.where(t_out >= rmin, rmin, np.inf))
+            t[disc < 0] = np.inf
+            best = np.minimum(best, t.min(axis=1))
+
+        R = self._rects
+        if len(R):
+            cx = np.clip(x, R[:, 0], R[:, 0] + R[:, 2])
+            cy = np.clip(y, R[:, 1], R[:, 1] + R[:, 3])
+            R = R[np.hypot(cx - x, cy - y) <= rmax]
+        if len(R):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                inv_x = 1.0 / dx[:, None]
+                inv_y = 1.0 / dy[:, None]
+                t1 = (R[None, :, 0] - x) * inv_x
+                t2 = (R[None, :, 0] + R[None, :, 2] - x) * inv_x
+                t3 = (R[None, :, 1] - y) * inv_y
+                t4 = (R[None, :, 1] + R[None, :, 3] - y) * inv_y
+            # rays parallel to an axis: slab is (-inf, inf) if inside it, empty otherwise
+            par_x = np.abs(dx)[:, None] < 1e-12
+            in_x = (x >= R[None, :, 0]) & (x <= R[None, :, 0] + R[None, :, 2])
+            tx_lo = np.where(par_x, np.where(in_x, -np.inf, np.inf), np.minimum(t1, t2))
+            tx_hi = np.where(par_x, np.where(in_x, np.inf, -np.inf), np.maximum(t1, t2))
+            par_y = np.abs(dy)[:, None] < 1e-12
+            in_y = (y >= R[None, :, 1]) & (y <= R[None, :, 1] + R[None, :, 3])
+            ty_lo = np.where(par_y, np.where(in_y, -np.inf, np.inf), np.minimum(t3, t4))
+            ty_hi = np.where(par_y, np.where(in_y, np.inf, -np.inf), np.maximum(t3, t4))
+            tmin = np.maximum(tx_lo, ty_lo)
+            tmax = np.minimum(tx_hi, ty_hi)
+            hit = (tmin <= tmax) & (tmax >= 0)
+            t = np.where(hit, np.maximum(tmin, 0.0), np.inf)
+            t[t < rmin] = np.inf                   # same rule as the original code
+            best = np.minimum(best, t.min(axis=1))
+
+        idx = np.flatnonzero(best < rmax)
+        data = best[idx] + np.random.rand(len(idx)) * self.noise
+        angle_arr = np.linspace(self.angle_min, self.angle_max, self.angle_num)[idx]
+        return angle_arr, data
+
+    def _sense_march(self, pose, robots):
         # ---- Circular obstacles (giữ logic cũ) ----
         obstacles = []
         if OBSTACLES.size > 0:
