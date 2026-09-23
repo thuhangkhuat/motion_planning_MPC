@@ -99,7 +99,7 @@ OPEN_ALL_SLOTS  = False
 #     SCENARIO=3 python plot_scenario.py --traj
 NUMBER_RUN=1
 METHOD = 2  
-SCENARIO = int(os.environ.get("SCENARIO", 2))
+SCENARIO = int(os.environ.get("SCENARIO", 9))
 
 SCENARIOS = {
 
@@ -160,8 +160,8 @@ SCENARIOS = {
         ],
         starts=np.array([
             [3, 2, 3.],
-            [10, 6, 3.],
-            [10, 2, 3.],
+            # [10, 6, 3.],
+            # [10, 2, 3.],
         ]),
         rects=
         [
@@ -451,6 +451,53 @@ SCENARIOS = {
                   [1.85, 8.6, 0.75],
                   [33.4, 9.5, 0.85],
                   [20, 1.88, 0.75]
+
+                 ],
+        xlim=[-1, 51],
+        ylim=[-1, 11],
+
+            params=dict(                    # (optional)
+                W_slack=2.0,
+                W_col=1.0,
+                W_form_dist=1.0,
+                W_sat_slot = 1.0,
+            ),
+        
+    ),
+
+    9: dict(
+        tar_max_speed=1,
+        viewing_radius=1.5,
+        waypoints=[
+            np.array([4.0, 2.2, 0]),
+            np.array([18, 7.0, 0]),
+            np.array([33, 3, 0]),
+            np.array([47, 5.5, 0]),
+        ],
+        starts=np.array([
+            [3, 2, 3.],
+            [10, 8, 3.],
+            [11, 2, 3.],
+            [1.5, 6, 3.],
+            [5, 8.5, 3.]
+        ]),
+        rects=[
+            # [17, 3, 2, 2],
+            # [24, 8.0, 2.5, 1.5],
+            # [31.8, 5.2, 1.5, 2.5],
+            # [13, 0.5, 2.5, 1.2],
+            # [5, 0.5, 1, 1],
+            # [40, 8, 2.5, 1.5],
+            # [7, 8.5, 2, 1],
+        ],
+        circles=[
+                #   [5.4, 5.8, 0.75],
+                #   [24, 2.6, 1],
+                #   [39, 6, 0.85],
+                #   [42.0, 2, 0.75],
+                #   [1.85, 8.6, 0.75],
+                #   [33.4, 9.5, 0.85],
+                #   [20, 1.88, 0.75]
 
                  ],
         xlim=[-1, 51],

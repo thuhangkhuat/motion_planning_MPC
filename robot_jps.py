@@ -678,7 +678,7 @@ class Robot:
         if n == 0 or self.leader_current_pos is None:
             return 0.0
 
-        side = 4.0 * VIEWING_RADIUS
+        side = 5.6 * VIEWING_RADIUS
         lead = np.asarray(self.leader_current_pos)
 
         # ── Tập slot ứng viên ──
