@@ -1,10 +1,5 @@
 from config import *
-if METHOD == 1:
-    from robot_apf import Robot
-if METHOD == 2:
-    from robot_jps import Robot  
-if METHOD == 3:
-    from robot_mpc import Robot
+from robot_jps import Robot  
 
 
 import numpy as np
