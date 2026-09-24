@@ -1,12 +1,15 @@
-# Python 3.12 
+# Python 3.12 — đã kiểm tra với các phiên bản ghi bên cạnh
 numpy>=1.26          # 2.4.4
 scipy>=1.11          # 1.17.1
 matplotlib>=3.8
 casadi>=3.6          # 3.8.1
-pathfind>=0.1.2      # JPS planner
+pathfind>=0.1.2      # JPS planner (sẽ thay ở giai đoạn 3)
 tqdm>=4.66
+numba>=0.60          # local planner kernel (optional: pure-Python fallback, much slower)
+pyyaml>=6.0
 
-# pydecomp:
+# pydecomp và phụ thuộc — XEM README trước khi cài:
+#   pycddlib 3.x KHÔNG tương thích với pydecomp 2.0.0, và cần libgmp để build
 pycddlib>=2.1,<3
 pyny3d>=0.1.1
 pydecomp==2.0.0

@@ -3,15 +3,17 @@ target_manual.py — Target trajectory that passes EXACTLY through user-chosen p
 
 Replaces RRT (target_rrt.py): deterministic, no cache needed, fast on large maps.
 
-Waypoint source (first match wins):
-    1. File  scenarios/target_scen{N}.json   (created with pick_waypoints.py)
-    2. Key   'waypoints' in SCENARIOS[N] of config.py
+Waypoint source (resolved by config.py, first match wins):
+    1. scenarios/<name>.picks.json   (written by pick_waypoints.py)
+    2. target.waypoints / target.speeds in scenarios/<name>.yaml
 
-JSON format:
+picks.json format:
     {
-      "waypoints": [[x, y], [x, y], ...],      # or [x, y, z]
-      "speeds":    [v0, v1, ...]                # (optional) speed per segment,
-                                                # len = len(waypoints) - 1
+      "target": {
+        "waypoints": [[x, y], [x, y], ...],     # or [x, y, z]
+        "speeds":    [v0, v1, ...]               # optional, one per segment
+      },
+      "starts": [[x, y, z], ...]                 # optional, UAV start positions
     }
 
 Usage in main.py:
@@ -21,92 +23,49 @@ Usage in main.py:
 
 import json
 import os
+import re
 
 import numpy as np
 
+from geometry import catmull_rom, densify  # noqa: F401  (re-exported)
 from config import (SCENARIO, TIMESTEP, TAR_MAX_SPEED, TAR_RADIUS, SAFETY_MARGIN,
-                    TAR_SMOOTH_ENABLE, TAR_SPLINE_DS, TAR_WAYPOINTS,
-                    RECTANGLE_OBSTACLES, OBSTACLES)
+                    TAR_SMOOTH_ENABLE, TAR_SPLINE_DS, TAR_WAYPOINTS, TAR_SPEEDS,
+                    RECTANGLE_OBSTACLES, OBSTACLES, SCENARIO_DEF, picks_path)
 
 TARGET_MODE = os.environ.get("TARGET_MODE", "manual")   # "manual" | "rrt"
-WAYPOINT_DIR = "scenarios"
-
-
-def waypoint_file(scenario=SCENARIO):
-    return os.path.join(WAYPOINT_DIR, f"target_scen{scenario}.json")
 
 
 # ============================================================
 # Waypoint I/O
 # ============================================================
-def load_waypoints(scenario=SCENARIO):
-    """Return (waypoints Nx2, speeds (N-1,) or None, source)."""
-    path = waypoint_file(scenario)
-    if os.path.exists(path):
-        with open(path) as f:
-            d = json.load(f)
-        wps = np.asarray(d["waypoints"], dtype=float)[:, :2]
-        speeds = d.get("speeds")
-        return wps, (np.asarray(speeds, float) if speeds else None), path
-    wps = np.asarray([np.asarray(w, float)[:2] for w in TAR_WAYPOINTS])
-    return wps, None, "config.py"
+def load_waypoints():
+    """Return (waypoints Nx2, speeds (N-1,) or None, source file)."""
+    wps = np.asarray([np.asarray(w, float)[:2] for w in TAR_WAYPOINTS]).reshape(-1, 2)
+    src = SCENARIO_DEF["picks_file"] or SCENARIO_DEF["file"]
+    return wps, TAR_SPEEDS, os.path.relpath(src)
 
 
-def save_waypoints(waypoints, speeds=None, scenario=SCENARIO):
-    os.makedirs(WAYPOINT_DIR, exist_ok=True)
-    d = {"waypoints": [[round(float(x), 3), round(float(y), 3)]
-                       for x, y in np.asarray(waypoints)[:, :2]]}
+def save_picks(waypoints, speeds=None, starts=None, scenario=SCENARIO):
+    """Write <scenario>.picks.json (target waypoints / speeds and UAV starts)."""
+    d = {"target": {"waypoints": [[round(float(x), 3), round(float(y), 3)]
+                                  for x, y in np.asarray(waypoints)[:, :2]]}}
     if speeds is not None:
-        d["speeds"] = [float(v) for v in speeds]
-    path = waypoint_file(scenario)
-    with open(path, "w") as f:
-        json.dump(d, f, indent=2)
+        d["target"]["speeds"] = [float(v) for v in speeds]
+    if starts is not None:
+        d["starts"] = [[round(float(v), 3) for v in p] for p in np.asarray(starts)]
+    path = picks_path(scenario)
+    # one point per line: indent the structure, keep each [x, y(, z)] on one line
+    text = json.dumps(d, indent=2)
+    text = re.sub(r"\[\s+(-?[\d.e+-]+),\s+(-?[\d.e+-]+)(?:,\s+(-?[\d.e+-]+))?\s+\]",
+                  lambda m: "[" + ", ".join(g for g in m.groups() if g is not None) + "]", text)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
     return path
 
 
 # ============================================================
 # Geometry
 # ============================================================
-def catmull_rom(points, ds, alpha=0.5):
-    """
-    Centripetal Catmull-Rom spline (alpha=0.5) passing THROUGH every point.
-    Unlike the uniform variant in target_rrt.py, centripetal does not overshoot
-    or self-intersect when points are unevenly spaced.
-    Returns the sampled curve (M x 2) and the index in M of each input waypoint.
-    """
-    P = np.asarray(points, float)
-    if len(P) < 3:
-        return P.copy(), np.arange(len(P))
-    ctrl = np.vstack([2 * P[0] - P[1], P, 2 * P[-1] - P[-2]])   # reflective padding
-    out, knot_idx = [P[0]], [0]
-    for i in range(len(P) - 1):
-        p0, p1, p2, p3 = ctrl[i:i + 4]
-        t0 = 0.0
-        t1 = t0 + max(np.linalg.norm(p1 - p0), 1e-9) ** alpha
-        t2 = t1 + max(np.linalg.norm(p2 - p1), 1e-9) ** alpha
-        t3 = t2 + max(np.linalg.norm(p3 - p2), 1e-9) ** alpha
-        n = max(2, int(np.ceil(np.linalg.norm(p2 - p1) / ds)))
-        for t in np.linspace(t1, t2, n + 1)[1:]:
-            a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1
-            a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2
-            a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3
-            b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2
-            b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3
-            out.append((t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2)
-        knot_idx.append(len(out) - 1)
-    return np.asarray(out), np.asarray(knot_idx)
-
-
-def densify(points, ds):
-    """Resample a polyline so consecutive points are <= ds apart."""
-    P = np.asarray(points, float)
-    out = [P[0]]
-    for a, b in zip(P[:-1], P[1:]):
-        n = max(1, int(np.ceil(np.linalg.norm(b - a) / ds)))
-        out.extend(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
-    return np.asarray(out)
-
-
 def clearance(points, rects=None, circles=None):
     """Signed distance (negative = inside) from each point to the nearest obstacle."""
     rects = RECTANGLE_OBSTACLES if rects is None else rects
@@ -125,7 +84,7 @@ def clearance(points, rects=None, circles=None):
     return d
 
 
-def check_path(points, margin, ds=None):
+def check_path(points, margin, ds=None, rects=None, circles=None):
     """
     Return a list of (piece index, worst point, clearance) for every piece whose
     clearance < margin; empty if the path is safe. Vectorised: the whole path is
@@ -141,7 +100,7 @@ def check_path(points, margin, ds=None):
     frac = np.concatenate([np.arange(1, k + 1) / k for k in n])
     pts = np.vstack([P[:1], P[piece] + seg[piece] * frac[:, None]])
     piece = np.concatenate([[0], piece])
-    c = clearance(pts)
+    c = clearance(pts, rects, circles)
     bad = []
     for i in np.unique(piece[c < margin]):
         m = piece == i

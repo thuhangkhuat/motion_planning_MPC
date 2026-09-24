@@ -1,0 +1,42 @@
+# Scenario 8
+# Units: metres, m/s. See scenarios/README.md for every key.
+
+description: Scenario 8 (converted from the SCENARIOS dict in config.py)
+xlim: [-1, 51]
+ylim: [-1, 11]
+viewing_radius: 1.5
+tar_max_speed: 1
+starts:
+- [3, 2, 3]
+- [10, 8, 3]
+- [11, 2, 3]
+- [1.5, 6, 3]
+- [5, 8.5, 3]
+target:
+  waypoints:
+  - [4, 2.2, 0]
+  - [18, 7, 0]
+  - [33, 3, 0]
+  - [47, 5.5, 0]
+obstacles:
+  rects:
+  - [17, 3, 2, 2]
+  - [24, 8, 2.5, 1.5]
+  - [31.8, 5.2, 1.5, 2.5]
+  - [13, 0.5, 2.5, 1.2]
+  - [5, 0.5, 1, 1]
+  - [40, 8, 2.5, 1.5]
+  - [7, 8.5, 2, 1]
+  circles:
+  - [5.4, 5.8, 0.75]
+  - [24, 2.6, 1]
+  - [39, 6, 0.85]
+  - [42, 2, 0.75]
+  - [1.85, 8.6, 0.75]
+  - [33.4, 9.5, 0.85]
+  - [20, 1.88, 0.75]
+params:
+  W_slack: 2
+  W_col: 1
+  W_form_dist: 1
+  W_sat_slot: 1

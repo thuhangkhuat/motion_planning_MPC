@@ -21,7 +21,8 @@ import sys
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--scenario", type=int, help="scenario number (default: env SCENARIO or config)")
+    p.add_argument("--scenario", help="scenario number or name in scenarios/ "
+                                      "(default: env SCENARIO or config)")
     p.add_argument("--seed", type=int, default=0, help="numpy seed (default 0)")
     p.add_argument("--max-steps", type=int, default=None,
                    help="stop after N steps (default: until the target reaches its goal)")
@@ -58,7 +59,7 @@ from datetime import datetime  # noqa: E402
 import numpy as np   # noqa: E402
 
 import config        # noqa: E402
-from config import (NUM_ROBOT, STARTS, GOALS, SCENARIO, SCENARIOS, METHOD,  # noqa: E402
+from config import (NUM_ROBOT, STARTS, GOALS, SCENARIO_NAME, SCENARIO_DEF, METHOD,  # noqa: E402
                     VIEWING_RADIUS, FILE_NAME, TARGET_ARRIVAL_TOL, validate_config)
 
 log = logging.getLogger("main")
@@ -94,15 +95,15 @@ def _git_commit():
 
 def config_snapshot(args, target):
     params = {k: _jsonable(v) for k, v in vars(config).items()
-              if k.isupper() and k != "SCENARIOS" and not callable(v)
+              if k.isupper() and k != "SCENARIO_DEF" and not callable(v)
               and not isinstance(v, type(os))}
     snap = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "argv": sys.argv,
         "seed": args.seed,
         "git_commit": _git_commit(),
-        "scenario": SCENARIO,
-        "scenario_def": _jsonable(SCENARIOS[SCENARIO]),
+        "scenario": SCENARIO_NAME,
+        "scenario_def": _jsonable(SCENARIO_DEF),
         "target_mode": os.environ.get("TARGET_MODE", "manual"),
         "target_waypoints": _jsonable(getattr(target, "waypoints_2d", None)),
         "target_speeds": _jsonable(getattr(target, "speeds", None)),
@@ -117,7 +118,7 @@ def setup_run_dir(args):
     else:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         tag = f"_{args.tag}" if args.tag else ""
-        run_dir = os.path.join("runs", f"scen{SCENARIO}_n{NUM_ROBOT}_s{args.seed}_{stamp}{tag}")
+        run_dir = os.path.join("runs", f"{SCENARIO_NAME}_n{NUM_ROBOT}_s{args.seed}_{stamp}{tag}")
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
 
@@ -163,7 +164,7 @@ def collect_data(robots, target_traj, compute_times, n_iter, finished):
         "compute_time_max": float(ct.max()) if ct.size else float("nan"),
         "compute_time_min": float(ct.min()) if ct.size else float("nan"),
         "num_robot": NUM_ROBOT,
-        "scenario": SCENARIO,
+        "scenario": SCENARIO_NAME,
         "method": METHOD,
         "iterations": n_iter,
         "finished": finished,
@@ -206,13 +207,17 @@ def main(args):
     from target_manual import create_target
 
     target = create_target(force_regen=args.force_regen, verbose=not args.quiet)
+    import config as _cfg
+    if _cfg.PLANNER == "local":
+        from planner_grid import warmup
+        warmup()          # compile the numba kernel before timing starts
     robots = [Robot(i, np.concatenate([STARTS[i, :], [0, 0, 0]]), GOALS[i, :])
               for i in range(NUM_ROBOT)]
 
     with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
         json.dump(config_snapshot(args, target), f, indent=2, ensure_ascii=False)
-    log.info("Run dir: %s | scenario %d | %d UAV | seed %d",
-             run_dir, SCENARIO, NUM_ROBOT, args.seed)
+    log.info("Run dir: %s | scenario %s | %d UAV | seed %d",
+             run_dir, SCENARIO_NAME, NUM_ROBOT, args.seed)
 
     data_path = os.path.join(run_dir, "data.pkl")
     target_traj, compute_times = [], []
