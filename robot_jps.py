@@ -8,6 +8,7 @@ from utils import *
 from planner_jps import JPSPlanner
 from planner_grid import LocalGridPlanner
 from mpc_problem import MPCProblem
+import dynamics
 from kalman_target import KalmanTargetTracker
 
 from config import *
@@ -40,9 +41,9 @@ def _MPC_CFG():
     import config as _c
     keys = ["HORIZON_LENGTH", "TIMESTEP", "ROBOT_RADIUS", "VMAX", "UMAX", "W_u", "W_gui",
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
-            "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "W_leader_slack",
+            "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
-            "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
+            "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
 
 
@@ -61,6 +62,9 @@ class Robot:
 
         self.n_state = 6
         self.n_control = 3
+        # actual acceleration (lags the command by ACCEL_TAU, see dynamics.py)
+        self.accel = np.zeros(3)
+        self._A, self._B = dynamics.model(TIMESTEP, D_FRAC, ACCEL_TAU, 3)
 
         self.lidar = LidarScanner(range_min=LIDAR_RANGE_MIN, range_max=SENSING_RADIUS,
                                   angle_min=-np.pi, angle_max=np.pi,
@@ -151,27 +155,30 @@ class Robot:
 
         self.states_prediction = np.ones((HORIZON_LENGTH + 1, self.n_state)) * self.state
         self.controls_prediction = np.zeros((HORIZON_LENGTH, self.n_control))
+        # last parametric-MPC solution in its own planar layout (warm start)
+        self._mpc_X = None              # (H+1, 6) [px, py, vx, vy, ax, ay]
+        self._mpc_U = None              # (H, 2)
 
     def updateState(self, control: np.array, dt: float):
-        """Computes the states of robot after applying control signals"""
-        position = self.state[:3]
-        velocity = self.state[3:6]
-
-        next_position = position + velocity * dt
-        next_velocity = velocity + (control - D_FRAC * velocity) * dt
-
-        self.state = np.concatenate([next_position, next_velocity])
+        """Applies the commanded acceleration for one step (dynamics.py, exact)."""
+        assert abs(dt - TIMESTEP) < 1e-12, "the discrete model is built for TIMESTEP"
+        s = np.concatenate([self.state[:6], self.accel])
+        s = self._A @ s + self._B @ np.asarray(control, float)
+        self.state, self.accel = s[:6], s[6:]
         self.control = control
         self.time_stamp = self.time_stamp + dt
 
-        # Store
-        self.path.append(np.concatenate([[self.time_stamp], self.state, self.control]))
+        # Store: [t, x, y, z, vx, vy, vz, u(3), a(3)]
+        self.path.append(np.concatenate([[self.time_stamp], self.state, self.control, self.accel]))
         self.traj_refs.append(self.traj_ref)
         self.corridors_plot.append({'A': self.list_A, 'b': self.list_b})
 
         # Shift predictive values
         self.states_prediction[:-1, :] = self.states_prediction[1:, :]
         self.controls_prediction[:-1, :] = self.controls_prediction[1:, :]
+        if self._mpc_X is not None:
+            self._mpc_X[:-1, :] = self._mpc_X[1:, :]
+            self._mpc_U[:-1, :] = self._mpc_U[1:, :]
 
     def computeControlSignal(self, robots):
         """Computes control velocity of the copter"""
@@ -373,9 +380,9 @@ class Robot:
     # built once and re-solved with new parameter values every step.
     # ============================================================
     def _brake_control(self):
-        """Acceleration that cancels the velocity as fast as UMAX allows."""
-        v = self.state[3:6]
-        u = -v / TIMESTEP
+        """Command that cancels the velocity in one step, scaled down to UMAX."""
+        s = np.concatenate([self.state[:6], self.accel])
+        u = -(self._A[3:6] @ s) / self._B[3, 0]       # v[k+1] = A[3:6] s + B[3,0] u
         n = np.linalg.norm(u)
         return u if n <= UMAX else u * (UMAX / n)
 
@@ -428,18 +435,27 @@ class Robot:
         trk_goal = getattr(self, '_track_goal', self.goal)
         nb_idx = {r.index for r in neighbor_robots}
 
+        x0 = np.concatenate([self.state[[0, 1, 3, 4]], self.accel[:2]])
+        if self._mpc_X is None:
+            self._mpc_X = np.tile(x0, (HORIZON_LENGTH + 1, 1))
+            self._mpc_U = np.zeros((HORIZON_LENGTH, 2))
         ok, Xs, Us = self.mpc.solve(
-            x0=self.state,
+            x0=x0,
             A_hard=active_A, b_hard=active_b,
             A_cost=A_cost, b_cost=b_cost, use_corr_cost=A_cost is not None,
             others=[r.states_prediction for r in others],
             nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
             tgt=target_pos[0, :2], w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
-            X_init=self.states_prediction, U_init=self.controls_prediction)
+            X_init=self._mpc_X, U_init=self._mpc_U)
         if ok:
-            self.states_prediction, self.controls_prediction = Xs, Us
-            control = Us[0, :]
+            self._mpc_X, self._mpc_U = Xs, Us
+            # back to the 3D layout the rest of the code uses (altitude held)
+            H = HORIZON_LENGTH
+            self.states_prediction = np.column_stack(
+                [Xs[:, :2], np.full(H + 1, self.state[2]), Xs[:, 2:4], np.zeros(H + 1)])
+            self.controls_prediction = np.column_stack([Us, np.zeros(H)])
+            control = self.controls_prediction[0, :]
             self.mpc_fail_streak = 0
         else:
             log.warning("[Robot %d] MPC solve failed at t=%.2f", self.index, self.time_stamp)

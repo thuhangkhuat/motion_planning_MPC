@@ -291,6 +291,19 @@ def main(args):
         infeas = {r.index: len(getattr(r, "infeasible_log", [])) for r in robots}
         log.info(summary)
         log.info("MPC infeasible count per UAV: %s", infeas)
+        st = np.concatenate([r.mpc.solve_times for r in robots
+                             if getattr(r, "mpc", None) is not None] or [np.zeros(0)])
+        if st.size:
+            mpcs = [r.mpc for r in robots if getattr(r, "mpc", None) is not None]
+            n_fail = sum(m.n_fail for m in mpcs)
+            n_fb = sum(m.n_fallback for m in mpcs)
+            solver_line = (f"MPC solver {config.MPC_SOLVER}: {st.size} solves, "
+                           f"mean {1000 * st.mean():.1f} ms, median {1000 * np.median(st):.1f} ms, "
+                           f"p95 {1000 * np.percentile(st, 95):.1f} ms, max {1000 * st.max():.1f} ms, "
+                           f"failed {n_fail} ({100 * n_fail / st.size:.1f}%)"
+                           + (f", IPOPT fallback {n_fb}" if n_fb else ""))
+            log.info(solver_line)
+            summary += "\n       " + solver_line
         print(f"\n[DONE] {summary}\n       Data: {data_path}"
               + ("" if args.no_legacy_copy else f"  (+ legacy copy: {FILE_NAME})"))
     return data

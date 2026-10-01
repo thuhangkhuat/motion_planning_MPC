@@ -22,7 +22,8 @@ VMAX = 2                       # max speed (m/s)
 UMAX = 5                       # max acceleration (m/s^2)
 SENSING_RADIUS = 3.0           # LiDAR range (m)
 SENSING_NEIGHBOR = 3.0         # range within which other UAVs become hard constraints (m)
-D_FRAC = 0.0                   # drag coefficient in the dynamics
+D_FRAC = 0.0                   # linear drag in the dynamics (1/s), see dynamics.py
+ACCEL_TAU = 0.2                # time constant of the acceleration response (s); 0 = instant
 VIEWING_RADIUS = 1.5           # half side of the square camera FOV (m); set per scenario
 HFOV = 90
 VFOV = 90
@@ -111,6 +112,29 @@ IPOPT_OPTIONS = {
     'ipopt.acceptable_tol': 1e-2,
     'print_time': 0,
     'ipopt.acceptable_iter': 15,
+}
+
+# ─── NLP solver of the parametric MPC ───
+# "ipopt" (interior point) | "sqp" (CasADi sqpmethod, exact Hessian + qrqp QP solver)
+# Can also be set from the shell: MPC_SOLVER=sqp python main.py ...
+MPC_SOLVER = os.environ.get("MPC_SOLVER", "ipopt")
+
+# A solve that does not converge within these limits is re-solved with IPOPT
+# (SQP_FALLBACK_IPOPT), so the limits bound the time lost on hard steps.
+SQP_FALLBACK_IPOPT = True
+SQP_OPTIONS = {
+    'qpsol': 'qrqp',                      # fastest QP solver here (qpoases/daqp: 6-12x slower, osqp 3x)
+    'qpsol_options': {'print_iter': False, 'print_header': False, 'error_on_fail': False,
+                      'max_iter': 30},    # hard QPs otherwise run ~0.5 s each
+    'hessian_approximation': 'exact',
+    'convexify_strategy': 'regularize',   # the cost is not convex (barrier, S^3, d^4)
+    'max_iter': 8,
+    'tol_pr': 1e-4,
+    'tol_du': 1e-4,
+    'print_header': False,
+    'print_iteration': False,
+    'print_status': False,
+    'print_time': 0,
 }
 
 
@@ -461,6 +485,16 @@ def validate_config():
         add("ERROR", f"Unknown PLANNER={PLANNER!r} (use 'local' or 'jps').")
     if MPC_BACKEND not in ("parametric", "rebuild"):
         add("ERROR", f"Unknown MPC_BACKEND={MPC_BACKEND!r}.")
+    if MPC_SOLVER not in ("ipopt", "sqp"):
+        add("ERROR", f"Unknown MPC_SOLVER={MPC_SOLVER!r} (use 'ipopt' or 'sqp').")
+    elif MPC_SOLVER != "ipopt" and MPC_BACKEND != "parametric":
+        add("WARNING", f"MPC_SOLVER={MPC_SOLVER!r} only applies to MPC_BACKEND='parametric'; "
+                       f"the 'rebuild' backend always uses IPOPT.")
+    if ACCEL_TAU < 0:
+        add("ERROR", f"ACCEL_TAU={ACCEL_TAU} must be >= 0.")
+    if MPC_BACKEND == "rebuild" and (ACCEL_TAU > 0 or D_FRAC != 0):
+        add("WARNING", "MPC_BACKEND='rebuild' predicts with the original Euler double integrator "
+                       "(no drag, no acceleration lag); the simulator uses dynamics.py.")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

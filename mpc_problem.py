@@ -16,14 +16,23 @@ that any mode can use; what changes from step to step is passed as parameters:
 With every switch at the value the old code implied, the cost and the feasible
 set are the same as before (up to constant offsets from padded rows).
 
+The UAV flies at a fixed altitude, so the MPC is planar. Dynamics: dynamics.py
+(exact discretisation, drag D_FRAC, first-order acceleration lag ACCEL_TAU).
+    state   X[k] = [px, py, vx, vy, ax, ay]   (a = actual acceleration)
+    control U[k] = [ux, uy]                   (commanded acceleration)
+
 Cost scaling (COST_LENGTH_SCALE = L, COST_ACCEL_SCALE = U):
     distances are divided by L and controls by U before they enter the cost,
     so weights tuned on a small map keep their meaning on a large one.
     L = U = 1 reproduces the original cost exactly.
 """
 
+import time
+
 import casadi as ca
 import numpy as np
+
+import dynamics
 
 BIG = 1e6
 
@@ -47,8 +56,8 @@ class MPCProblem:
         Us = cfg["COST_ACCEL_SCALE"]
 
         opti = ca.Opti()
-        X = opti.variable(H + 1, 6)
-        U = opti.variable(H, 3)
+        X = opti.variable(H + 1, 6)                   # [px, py, vx, vy, ax, ay]
+        U = opti.variable(H, 2)                       # commanded acceleration
         S = opti.variable(H, 4)                       # leader CBF slack (m)
 
         p = {}
@@ -70,9 +79,10 @@ class MPCProblem:
         p["s_ref"] = opti.parameter()                 # 1: guide to ref, 0: standoff
 
         # ── dynamics ──
+        Ad, Bd = dynamics.model(dt, cfg["D_FRAC"], cfg["ACCEL_TAU"], 2)
         opti.subject_to(X[0, :] == p["x0"])
         for i in range(H):
-            opti.subject_to(X[i + 1, :] == X[i, :] + ca.horzcat(X[i, 3:], U[i, :]) * dt)
+            opti.subject_to(X[i + 1, :] == ca.mtimes(X[i, :], Ad.T) + ca.mtimes(U[i, :], Bd.T))
 
         # ── corridor (hard) ──
         for i in range(H + 1):
@@ -101,7 +111,7 @@ class MPCProblem:
 
         # ── bounds ──
         for i in range(H):
-            opti.subject_to(ca.sumsqr(X[i + 1, 3:]) <= cfg["VMAX"] ** 2)
+            opti.subject_to(ca.sumsqr(X[i + 1, 2:4]) <= cfg["VMAX"] ** 2)
             opti.subject_to(ca.sumsqr(U[i, :]) <= cfg["UMAX"] ** 2)
 
         # ── cost ──
@@ -135,10 +145,17 @@ class MPCProblem:
         cost += cfg["W_leader_slack"] * ca.sum1(ca.sum2((S / Ls) ** 3))
 
         opti.minimize(cost)
-        opts = dict(cfg["IPOPT_OPTIONS"])
+        solver = cfg.get("MPC_SOLVER", "ipopt")
+        opts = dict(cfg["SQP_OPTIONS" if solver == "sqp" else "IPOPT_OPTIONS"])
         opts.setdefault("expand", True)      # SX graph: much cheaper function evaluations
-        opti.solver("ipopt", opts)
+        opti.solver("sqpmethod" if solver == "sqp" else "ipopt", opts)
         self.opti, self.X, self.U, self.S, self.p = opti, X, U, S, p
+        self.solve_times = []                # wall time of every solve() call, fallback included (s)
+        self.n_fail = 0
+        self.n_fallback = 0                  # SQP failures re-solved with IPOPT
+        self.fallback = None
+        if solver == "sqp" and cfg.get("SQP_FALLBACK_IPOPT", True):
+            self.fallback = MPCProblem(n_others, n_faces, {**cfg, "MPC_SOLVER": "ipopt"})
 
     # ------------------------------------------------------------
     def _pad(self, A, b):
@@ -150,12 +167,24 @@ class MPCProblem:
         bp[:len(b), 0] = b
         return Ap, bp
 
-    def solve(self, x0, A_hard, b_hard, A_cost, b_cost, use_corr_cost, others, nb_flags,
-              tgt, w_search, slot, w_slot, leader, ref, trk_goal, s_ref,
-              X_init, U_init):
-        """Returns (ok, X, U)."""
+    def solve(self, *args, **kwargs):
+        """Returns (ok, X, U) in the MPC layout above. Arguments: see _solve."""
+        t0 = time.perf_counter()
+        try:
+            ok, X, U = self._solve(*args, **kwargs)
+            if not ok and self.fallback is not None:
+                self.n_fallback += 1
+                ok, X, U = self.fallback._solve(*args, **kwargs)
+            self.n_fail += not ok
+            return ok, X, U
+        finally:
+            self.solve_times.append(time.perf_counter() - t0)
+
+    def _solve(self, x0, A_hard, b_hard, A_cost, b_cost, use_corr_cost, others, nb_flags,
+               tgt, w_search, slot, w_slot, leader, ref, trk_goal, s_ref,
+               X_init, U_init):
         o, p, cfg = self.opti, self.p, self.cfg
-        o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))
+        o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))   # [px, py, vx, vy, ax, ay]
         Ah, bh = self._pad(A_hard, b_hard)
         Ac, bc = self._pad(A_cost, b_cost)
         o.set_value(p["A_hard"], Ah)
