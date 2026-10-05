@@ -156,7 +156,7 @@ W_sat_angle = 5.0
 W_sat_spread = 2.0
 SAT_DISTANCE_RATIO = 1.9       # r_d = ratio * VIEWING_RADIUS
 DESIRED_SEPARATION_RATIO = 0.5 # DESIRED_SEPARATION = ratio * VIEWING_RADIUS (derived)
-SLOT_SPACING_RATIO = 5.6       # slot grid spacing = ratio * VIEWING_RADIUS
+SLOT_SPACING_RATIO = 2.0       # slot grid spacing = ratio * VIEWING_RADIUS (2 = adjacent FOVs)
 
 # ─── TRACK mode: leader ───
 W_leader_slack = 1e3           # penalty on the CBF visibility slack
@@ -473,6 +473,12 @@ def validate_config():
     if os.path.isfile(picks_path(SCENARIO)):
         add("WARNING", f"{os.path.relpath(picks_path(SCENARIO))} is no longer read: picked points "
                        f"now live in the YAML. Copy them over (or re-pick and save) and delete it.")
+    slot_far = SLOT_SPACING_RATIO * VIEWING_RADIUS * max(np.hypot(*c) for c in GRID_CELLS)
+    track_exit = VIEWING_RADIUS + FORMATION_GAP + TRACK_EXIT_HYSTERESIS
+    if slot_far >= track_exit:
+        add("WARNING", f"Farthest satellite slot is {slot_far:.1f} m from the leader but satellites "
+                       f"leave TRACK at {track_exit:.1f} m: they drop out before reaching it "
+                       f"(lower SLOT_SPACING_RATIO or raise TRACK_EXIT_HYSTERESIS_RATIO).")
     if ACCEL_TAU < 0:
         add("ERROR", f"ACCEL_TAU={ACCEL_TAU} must be >= 0.")
     if MPC_BACKEND == "rebuild" and (ACCEL_TAU > 0 or D_FRAC != 0):

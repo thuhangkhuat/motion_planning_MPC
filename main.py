@@ -156,6 +156,8 @@ def collect_data(robots, target_traj, compute_times, n_iter, finished):
             "traj_refs": _as_array(robots[i].traj_refs),
             "tar_traj": np.array(target_traj),
             "corridors": _as_array(robots[i].corridors_plot),
+            "mpc_pred": np.array(robots[i].pred_hist, dtype=np.float32),   # (T, H+1, 2)
+            "status": np.array(robots[i].status_hist, dtype=np.int16),     # (T, 3)
         }
     ct = np.array(compute_times)
     data["meta"] = {

@@ -77,6 +77,7 @@ class MPCProblem:
         p["ref"] = opti.parameter(1, 2)               # next reference waypoint
         p["trk_goal"] = opti.parameter(1, 2)          # predicted target (lead pursuit)
         p["s_ref"] = opti.parameter()                 # 1: guide to ref, 0: standoff
+        p["w_tra"] = opti.parameter()                 # standoff weight (0 for satellites)
 
         # ── dynamics ──
         Ad, Bd = dynamics.model(dt, cfg["D_FRAC"], cfg["ACCEL_TAU"], 2)
@@ -124,7 +125,7 @@ class MPCProblem:
         d_goal = ca.sumsqr(X[H, :2] - p["trk_goal"]) / Ls ** 2
         standoff = (cfg["STANDOFF_DISTANCE"] / Ls) ** 2
         cost += cfg["W_gui"] * p["s_ref"] * d_ref ** 2
-        cost += cfg["W_tra"] * (1 - p["s_ref"]) * (d_goal - standoff) ** 2
+        cost += p["w_tra"] * (1 - p["s_ref"]) * (d_goal - standoff) ** 2
         # corridor barrier
         eps = cfg["CORRIDOR_BARRIER_EPS"]
         for i in range(H):
@@ -182,7 +183,7 @@ class MPCProblem:
 
     def _solve(self, x0, A_hard, b_hard, A_cost, b_cost, use_corr_cost, others, nb_flags,
                tgt, w_search, slot, w_slot, leader, ref, trk_goal, s_ref,
-               X_init, U_init):
+               X_init, U_init, w_tra=None):
         o, p, cfg = self.opti, self.p, self.cfg
         o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))   # [px, py, vx, vy, ax, ay]
         Ah, bh = self._pad(A_hard, b_hard)
@@ -205,6 +206,7 @@ class MPCProblem:
         o.set_value(p["ref"], np.asarray(ref, float)[:2].reshape(1, 2))
         o.set_value(p["trk_goal"], np.asarray(trk_goal, float)[:2].reshape(1, 2))
         o.set_value(p["s_ref"], float(s_ref))
+        o.set_value(p["w_tra"], cfg["W_tra"] if w_tra is None else float(w_tra))
         o.set_initial(self.X, X_init)
         o.set_initial(self.U, U_init)
         o.set_initial(self.S, 0)

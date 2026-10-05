@@ -126,6 +126,15 @@ Without `RUN_FILE`, the plot scripts read the legacy path
 (`data<M>_scen<N>_<n>.txt`); `main.py` still writes a copy there on every run
 (disable with `--no-legacy-copy`).
 
+To debug step by step, replay a run in a window that follows the target
+(MPC plans, planner reference, corridors, modes, MPC failures; `n` jumps to the
+next failure). Keys are listed in the script header.
+
+```bash
+python debug_viewer.py                          # latest run in runs/
+python debug_viewer.py runs/<run> --start 1200 --window 80
+```
+
 ## Project layout
 
 | File | Role |

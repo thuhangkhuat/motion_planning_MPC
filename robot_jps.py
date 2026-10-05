@@ -149,6 +149,10 @@ class Robot:
         # Store robot path
         self.path = []
         self.traj_refs = []
+        # per-step debug record (debug_viewer.py): MPC plan used at this step and
+        # [is_track, is_leader, mpc_fail_streak]
+        self.pred_hist = []
+        self.status_hist = []
         self.full_path = None
         self.path_update_counter = 0
         self.cached_path = None
@@ -172,6 +176,9 @@ class Robot:
         self.path.append(np.concatenate([[self.time_stamp], self.state, self.control, self.accel]))
         self.traj_refs.append(self.traj_ref)
         self.corridors_plot.append({'A': self.list_A, 'b': self.list_b})
+        self.pred_hist.append(self.states_prediction[:, :2].astype(np.float32))
+        self.status_hist.append((self.mode == MODE_TRACK, self.is_leader_role,
+                                 getattr(self, "mpc_fail_streak", 0)))
 
         # Shift predictive values
         self.states_prediction[:-1, :] = self.states_prediction[1:, :]
@@ -193,8 +200,19 @@ class Robot:
         self.target_tracker.update(self.goal[:2])
 
         # ─── Lead pursuit: predict future target position ───
-        planning_goal = self._compute_predicted_goal()
-        self._track_goal = planning_goal
+        self._track_goal = self._compute_predicted_goal()
+
+        # ─── Mode / role / slot, BEFORE planning: a satellite plans to its slot ───
+        # (once per step: the mode hysteresis counters advance on every call)
+        self._update_mode_and_role(robots)
+        self._slot = None
+        if self.mode == MODE_TRACK and not self.is_leader_role:
+            self._slot = self._slot_target(robots)
+        planning_goal = self._track_goal
+        if self._slot is not None:
+            # a slot inside an obstacle is fine: the planner goes to the reachable
+            # cell closest to it, and the MPC pulls to the end of that path
+            planning_goal = np.array([self._slot[0], self._slot[1], self._track_goal[2]])
 
         # CHANGE #3 + #4: RRT-Connect + path commit + lead pursuit
         self.traj_ref = self.getOrientedGoalTrajectory(
@@ -283,7 +301,7 @@ class Robot:
         # SEARCH: all UAV chase target. No CBF.
         # TRACK: leader has CBF FOV. Satellites do formation.
         # ============================================================
-        is_leader = self._update_mode_and_role(robots)
+        is_leader = self.is_leader_role          # updated in computeControlSignal
 
         # CBF chỉ áp khi self là LEADER trong TRACK mode
         if is_leader:
@@ -379,6 +397,18 @@ class Robot:
     # Parametric MPC backend (mpc_problem.py): same problem as the code above,
     # built once and re-solved with new parameter values every step.
     # ============================================================
+    def _path_carrot(self, dist):
+        """Point `dist` metres along traj_ref from the UAV. When the path is shorter,
+        the live slot: the path is only replanned once its goal drifts by
+        TARGET_REPLAN_THRESHOLD, so its end lags the moving slot by up to that much."""
+        P = np.vstack([self.state[:2], np.asarray(self.traj_ref)[1:, :2]])
+        for a, b in zip(P[:-1], P[1:]):
+            seg = float(np.linalg.norm(b - a))
+            if seg >= dist:
+                return a + (b - a) * (dist / seg)
+            dist -= seg
+        return np.asarray(self._slot[:2], float)
+
     def _brake_control(self):
         """Command that cancels the velocity in one step, scaled down to UMAX."""
         s = np.concatenate([self.state[:6], self.accel])
@@ -408,7 +438,7 @@ class Robot:
                     break
             self.corridors.append({'A': active_A, 'b': active_b})
 
-        is_leader = self._update_mode_and_role(robots)
+        is_leader = self.is_leader_role          # updated in computeControlSignal
         others = [r for r in robots if r.index != self.index]
 
         A_cost = self.list_A[0] if self.list_A else None
@@ -422,13 +452,18 @@ class Robot:
             self.mpc = MPCProblem(len(others), n_faces, _MPC_CFG())
 
         w_search = w_slot = 0.0
+        w_tra = W_tra
         slot = np.zeros(2)
         if self.mode == MODE_SEARCH:
             w_search = W_search_track
-        elif not is_leader:
-            s = self._slot_target(robots)
-            if s is not None:
-                slot, w_slot = s, W_sat_slot
+        elif self._slot is not None:
+            # pull along the planned path, not straight at the slot: a straight pull
+            # through an obstacle pins the UAV against the corridor. The path ends at
+            # the slot, or at the reachable cell closest to it when it is blocked.
+            slot = (self._path_carrot(VMAX * HORIZON_LENGTH * TIMESTEP)
+                    if self.traj_ref is not None else self._slot)
+            w_slot = W_sat_slot
+            w_tra = 0.0       # the target standoff ring would fight the slot pull
 
         guide = self.traj_ref is not None and len(self.traj_ref) > 2
         ref = self.traj_ref[1, :2] if guide else np.zeros(2)
@@ -447,6 +482,7 @@ class Robot:
             nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
             tgt=target_pos[0, :2], w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
+            w_tra=w_tra,
             X_init=self._mpc_X, U_init=self._mpc_U)
         if ok:
             self._mpc_X, self._mpc_U = Xs, Us
@@ -795,7 +831,7 @@ class Robot:
     # SATELLITE costs (chỉ áp khi self là satellite trong TRACK)
     # ============================================================
     def costSatelliteSlotDynamic(self, opt_states, robots):
-        slot = self._slot_target(robots)
+        slot = getattr(self, "_slot", None)      # computed once per step in computeControlSignal
         if slot is None:
             return 0.0
         target_xy = ca.DM([slot[0], slot[1]])
@@ -1091,10 +1127,19 @@ class Robot:
         if obstacle_points.shape[0] < 1:
             return [], []
         box = np.array([[CORRIDOR_BOX, CORRIDOR_BOX]])
+        seg = np.array(path_ref[0:2], dtype=float)
+        if len(seg) < 2 or np.linalg.norm(seg[1] - seg[0]) < 1e-6:
+            # UAV already at its goal (e.g. a satellite on its slot): a zero-length
+            # segment makes pydecomp divide by zero -> NaN faces. Use a short segment.
+            seg = np.vstack([seg[0], seg[0] + [GRID_RESOLUTION, 0.0]])
         try:
-            list_A, list_b = pdc.convex_decomposition_2D(
-                obstacle_points, path_ref[0:2], box)
-            return list_A, list_b
+            list_A, list_b = pdc.convex_decomposition_2D(obstacle_points, seg, box)
+            keep = [i for i in range(len(list_A))
+                    if np.all(np.isfinite(list_A[i])) and np.all(np.isfinite(list_b[i]))]
+            if len(keep) < len(list_A):
+                log.warning("[Robot %d] Dropped %d corridor polytope(s) with non-finite faces",
+                            self.index, len(list_A) - len(keep))
+            return [list_A[i] for i in keep], [list_b[i] for i in keep]
         except Exception as e:
             log.warning("[Robot %d] Error in generating safe corridor: %s", self.index, e)
             return [], []
