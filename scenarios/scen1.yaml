@@ -11,20 +11,27 @@ viewing_radius: 25        # half side of the camera footprint (m)
 tar_max_speed: 5          # target speed (m/s)
 
 starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
-- [40, 40, 30]
-- [70, 40, 30]
-- [40, 70, 30]
-- [70, 70, 30]
-- [55, 100, 30]
+- [400.85, 66.871, 30]
+- [380.683, 335.753, 30]
+- [83.569, 101.826, 30]
+- [125.245, 337.098, 30]
+- [28.448, 194.59, 30]
 
 target:
   waypoints:              # edit with pick_waypoints.py (key t)
   - [100, 100]
-  - [450, 180]
-  - [850, 150]
+  - [454.626, 216.101]
+  - [723.508, 308.865]
+  - [922.481, 256.433]
   - [900, 550]
-  - [600, 850]
-  - [200, 800]
+  - [740.986, 720.255]
+  - [675.11, 435.24]
+  - [525.88, 497.083]
+  - [581.001, 771.343]
+  - [251.62, 852.007]
+  - [172.3, 744.454]
+  - [33.825, 623.457]
+  - [180.366, 467.506]
   # speeds: [5, 5, 3, 5, 5]   # optional, one per segment
 
 obstacles:                # fixed obstacles, added before the random ones

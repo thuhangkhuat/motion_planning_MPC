@@ -44,9 +44,10 @@ params:                     # override any constant from config.py, e.g.
 ## Picked points
 
 `python pick_waypoints.py <scenario>` edits target waypoints (key `t`) and
-UAV starts (key `u`) and saves them to `<name>.picks.json` next to the YAML
-file. When that file exists its values replace `target` and `starts` from the
-YAML. Delete it to go back to the YAML values.
+UAV starts (key `u`) and saves them (key `s` / Enter) into the YAML file
+itself. Only `starts:` and `target: waypoints:` / `speeds:` are rewritten;
+comments and every other line are kept. Each point is written on one line, so
+comments placed between list items are dropped.
 
 ## Generated maps
 

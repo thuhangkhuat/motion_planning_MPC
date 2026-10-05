@@ -196,9 +196,8 @@ OPEN_ALL_SLOTS = False
 # Scenarios live in scenarios/*.yaml (see scenarios/README.md).
 #     python main.py --scenario 6          -> scenarios/scen6.yaml
 #     python main.py --scenario big1000    -> scenarios/big1000.yaml
-# Points picked with pick_waypoints.py (target waypoints / speeds,
-# UAV starts) are stored next to it in <name>.picks.json and
-# override the YAML values.
+# pick_waypoints.py writes target waypoints / speeds and UAV starts
+# straight into that YAML file (comments and layout are kept).
 # ============================================================
 NUMBER_RUN = 1
 METHOD = 2
@@ -229,12 +228,12 @@ def list_scenarios():
 
 
 def picks_path(name):
+    """Former picker output (<name>.picks.json); no longer read, see validate_config()."""
     return scenario_path(name)[:-5] + ".picks.json"
 
 
 def load_scenario(name):
-    """Raw scenario dict (YAML) with <name>.picks.json merged in."""
-    import json
+    """Raw scenario dict (YAML)."""
     import yaml
     path = scenario_path(name)
     with open(path, encoding="utf-8") as f:
@@ -242,24 +241,6 @@ def load_scenario(name):
     d.setdefault("target", {})
     d.setdefault("obstacles", {})
     d["_file"] = path
-    d["_picks"] = None
-    picks = path[:-5] + ".picks.json"
-    legacy = os.path.join(SCENARIO_DIR, f"target_scen{name}.json")   # older picker format
-    if os.path.isfile(picks):
-        with open(picks, encoding="utf-8") as f:
-            p = json.load(f)
-        if p.get("target", {}).get("waypoints"):
-            d["target"]["waypoints"] = p["target"]["waypoints"]
-            d["target"]["speeds"] = p["target"].get("speeds")
-        if p.get("starts"):
-            d["starts"] = p["starts"]
-        d["_picks"] = picks
-    elif os.path.isfile(legacy):
-        with open(legacy, encoding="utf-8") as f:
-            p = json.load(f)
-        d["target"]["waypoints"] = p["waypoints"]
-        d["target"]["speeds"] = p.get("speeds")
-        d["_picks"] = legacy
     return d
 
 
@@ -321,7 +302,6 @@ OBSTACLES = np.array(_circles, dtype=float) if _circles else np.array([])
 SCENARIO_DEF = {
     "name": SCENARIO_NAME,
     "file": _s["_file"],
-    "picks_file": _s["_picks"],
     "description": _s.get("description", ""),
     "xlim": XLIM, "ylim": YLIM,
     "viewing_radius": VIEWING_RADIUS,
@@ -490,6 +470,9 @@ def validate_config():
     elif MPC_SOLVER != "ipopt" and MPC_BACKEND != "parametric":
         add("WARNING", f"MPC_SOLVER={MPC_SOLVER!r} only applies to MPC_BACKEND='parametric'; "
                        f"the 'rebuild' backend always uses IPOPT.")
+    if os.path.isfile(picks_path(SCENARIO)):
+        add("WARNING", f"{os.path.relpath(picks_path(SCENARIO))} is no longer read: picked points "
+                       f"now live in the YAML. Copy them over (or re-pick and save) and delete it.")
     if ACCEL_TAU < 0:
         add("ERROR", f"ACCEL_TAU={ACCEL_TAU} must be >= 0.")
     if MPC_BACKEND == "rebuild" and (ACCEL_TAU > 0 or D_FRAC != 0):

@@ -22,7 +22,7 @@ FOV_SPACING = 0.75          # m — rải 1 ô FOV mỗi 0.75m đường đi (nh
 FOV_ALPHA   = 0.035         # độ mờ mỗi ô FOV (nhỏ = chồng nhiều không quá đậm)
 
 SHOW_2D = True              # vẽ hình 2D (top-down)
-SHOW_3D = True              # vẽ thêm hình 3D
+SHOW_3D = False             # vẽ thêm hình 3D
 OBS_HEIGHT = 4.0            # chiều cao đùn obstacle trong view 3D (m)
 Z_FALLBACK = 3.0            # độ cao UAV nếu path không có cột z hợp lệ
 

@@ -102,9 +102,9 @@ python plot_scenario.py 6 --traj   # preview the map and the target trajectory
 python map_gen.py big1000          # statistics of a generated map
 ```
 
-Picked points are stored in `scenarios/<name>.picks.json` and override the
-YAML values; an optional `"speeds"` list sets the speed of each target
-segment. The trajectory passes exactly through the chosen points (centripetal
+Picked points are written straight into `scenarios/<name>.yaml` (`starts:` and
+`target: waypoints:`; comments and the rest of the file are kept); an optional
+`target: speeds:` list sets the speed of each target segment. The trajectory passes exactly through the chosen points (centripetal
 Catmull-Rom spline when `TAR_SMOOTH_ENABLE` is on), and segments that come
 too close to obstacles are reported as warnings.
 
@@ -132,7 +132,7 @@ Without `RUN_FILE`, the plot scripts read the legacy path
 |---|---|
 | `main.py` | simulation loop, CLI, result saving |
 | `config.py` | shared parameters, scenario loading, derived parameters, consistency checks |
-| `scenarios/` | scenario files (`*.yaml`) and picked points (`*.picks.json`) |
+| `scenarios/` | scenario files (`*.yaml`) |
 | `map_gen.py` | seeded random obstacle maps |
 | `geometry.py` | spline / resampling helpers |
 | `robot_jps.py` | UAV: NMPC, CBF, SEARCH/TRACK, formation slots, path commit |

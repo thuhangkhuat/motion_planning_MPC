@@ -3,34 +3,24 @@ target_manual.py — Target trajectory that passes EXACTLY through user-chosen p
 
 Replaces RRT (target_rrt.py): deterministic, no cache needed, fast on large maps.
 
-Waypoint source (resolved by config.py, first match wins):
-    1. scenarios/<name>.picks.json   (written by pick_waypoints.py)
-    2. target.waypoints / target.speeds in scenarios/<name>.yaml
-
-picks.json format:
-    {
-      "target": {
-        "waypoints": [[x, y], [x, y], ...],     # or [x, y, z]
-        "speeds":    [v0, v1, ...]               # optional, one per segment
-      },
-      "starts": [[x, y, z], ...]                 # optional, UAV start positions
-    }
+Waypoints: target.waypoints / target.speeds in scenarios/<name>.yaml.
+pick_waypoints.py writes them (and the UAV starts) back into that file with
+save_to_scenario(), which rewrites only those entries and keeps the comments
+and layout of the rest of the file.
 
 Usage in main.py:
     from target_manual import create_target
     target = create_target()          # .state, .trajectory, .update(), .final_destination
 """
 
-import json
 import os
-import re
 
 import numpy as np
 
 from geometry import catmull_rom, densify  # noqa: F401  (re-exported)
 from config import (SCENARIO, TIMESTEP, TAR_MAX_SPEED, TAR_RADIUS, SAFETY_MARGIN,
                     TAR_SMOOTH_ENABLE, TAR_SPLINE_DS, TAR_WAYPOINTS, TAR_SPEEDS,
-                    RECTANGLE_OBSTACLES, OBSTACLES, SCENARIO_DEF, picks_path)
+                    RECTANGLE_OBSTACLES, OBSTACLES, SCENARIO_DEF, scenario_path)
 
 TARGET_MODE = os.environ.get("TARGET_MODE", "manual")   # "manual" | "rrt"
 
@@ -41,25 +31,142 @@ TARGET_MODE = os.environ.get("TARGET_MODE", "manual")   # "manual" | "rrt"
 def load_waypoints():
     """Return (waypoints Nx2, speeds (N-1,) or None, source file)."""
     wps = np.asarray([np.asarray(w, float)[:2] for w in TAR_WAYPOINTS]).reshape(-1, 2)
-    src = SCENARIO_DEF["picks_file"] or SCENARIO_DEF["file"]
-    return wps, TAR_SPEEDS, os.path.relpath(src)
+    return wps, TAR_SPEEDS, os.path.relpath(SCENARIO_DEF["file"])
 
 
-def save_picks(waypoints, speeds=None, starts=None, scenario=SCENARIO):
-    """Write <scenario>.picks.json (target waypoints / speeds and UAV starts)."""
-    d = {"target": {"waypoints": [[round(float(x), 3), round(float(y), 3)]
-                                  for x, y in np.asarray(waypoints)[:, :2]]}}
-    if speeds is not None:
-        d["target"]["speeds"] = [float(v) for v in speeds]
+def _num(v):
+    v = round(float(v), 3)
+    return str(int(v)) if v.is_integer() else repr(v)
+
+
+def _flow(p):
+    return "[" + ", ".join(_num(v) for v in p) + "]"
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def _is_value(line):
+    """A line that holds data (not blank, not a comment)."""
+    st = line.strip()
+    return bool(st) and not st.startswith("#")
+
+
+def _find_key(lines, key, lo, hi, indent):
+    """Index of the line `<indent spaces>key:` in lines[lo:hi], or None."""
+    for i in range(lo, hi):
+        ln = lines[i]
+        if _indent(ln) == indent and ln.lstrip(" ").startswith(key + ":"):
+            return i
+    return None
+
+
+def _value_end(lines, i):
+    """End (exclusive) of the value of the key on line i: deeper-indented lines
+    and '- ' items at the key's indent. Stops at the first blank/comment line."""
+    ind, j = _indent(lines[i]), i + 1
+    while j < len(lines) and _is_value(lines[j]) and (
+            _indent(lines[j]) > ind or lines[j].lstrip(" ").startswith("- ")):
+        j += 1
+    return j
+
+
+def _key_line(line, key):
+    """`key:` keeping the line's indent and trailing comment, dropping an inline value."""
+    rest = line.split(":", 1)[1]
+    k = rest.find("#")
+    comment = rest[k:] if k >= 0 else ""
+    pad = " " * max(1, len(rest) - len(rest.lstrip(" "))) if comment and not rest[:k].strip() else " "
+    return " " * _indent(line) + key + ":" + (pad + comment if comment else "")
+
+
+def _set_list(lines, i, key, items):
+    """Replace the value of the key on line i by a block list of flow items."""
+    end = _value_end(lines, i)
+    old = [ln for ln in lines[i + 1:end] if ln.lstrip(" ").startswith("- ")]
+    ind = _indent(old[0]) if old else _indent(lines[i])
+    lines[i:end] = [_key_line(lines[i], key)] + [" " * ind + "- " + _flow(p) for p in items]
+
+
+def save_to_scenario(waypoints, speeds=None, starts=None, scenario=SCENARIO):
+    """
+    Write target waypoints / speeds and UAV starts into scenarios/<name>.yaml.
+    Only `starts:`, `target: waypoints:` and `target: speeds:` are rewritten;
+    comments and every other line stay as they are. speeds=None removes an
+    existing `speeds:` entry (e.g. after the number of waypoints changed).
+    The result is parsed back and compared before the file is replaced.
+    """
+    import yaml
+    path = scenario_path(scenario)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    before = yaml.safe_load(text) or {}
+    lines = text.splitlines()
+    wps = [[float(x), float(y)] for x, y in np.asarray(waypoints, float)[:, :2]]
+
+    # ── starts (top level) ──
     if starts is not None:
-        d["starts"] = [[round(float(v), 3) for v in p] for p in np.asarray(starts)]
-    path = picks_path(scenario)
-    # one point per line: indent the structure, keep each [x, y(, z)] on one line
-    text = json.dumps(d, indent=2)
-    text = re.sub(r"\[\s+(-?[\d.e+-]+),\s+(-?[\d.e+-]+)(?:,\s+(-?[\d.e+-]+))?\s+\]",
-                  lambda m: "[" + ", ".join(g for g in m.groups() if g is not None) + "]", text)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text + "\n")
+        st = [[float(v) for v in p] for p in starts]
+        i = _find_key(lines, "starts", 0, len(lines), 0)
+        if i is None:
+            lines += ["", "starts:"]
+            i = len(lines) - 1
+        _set_list(lines, i, "starts", st)
+
+    # ── target: waypoints / speeds ──
+    t = _find_key(lines, "target", 0, len(lines), 0)
+    if t is None:
+        lines += ["", "target:"]
+        t = len(lines) - 1
+    t_end = next((j for j in range(t + 1, len(lines))
+                  if _is_value(lines[j]) and _indent(lines[j]) == 0
+                  and not lines[j].startswith("- ")), len(lines))
+    sub = next((_indent(lines[j]) for j in range(t + 1, t_end) if _is_value(lines[j])), 2)
+    w = _find_key(lines, "waypoints", t + 1, t_end, sub)
+    if w is None:
+        lines.insert(t + 1, " " * sub + "waypoints:")
+        w, t_end = t + 1, t_end + 1
+    n_before = len(lines)
+    _set_list(lines, w, "waypoints", wps)
+    t_end += len(lines) - n_before
+    v = _find_key(lines, "speeds", t + 1, t_end, sub)
+    if speeds is None:
+        if v is not None:
+            del lines[v:_value_end(lines, v)]
+    else:
+        sp = "speeds: [" + ", ".join(_num(x) for x in speeds) + "]"
+        if v is not None:
+            comment = _key_line(lines[v], "speeds")[_indent(lines[v]) + len("speeds:"):]
+            lines[v:_value_end(lines, v)] = [" " * sub + sp + comment]
+        else:
+            lines.insert(_value_end(lines, w), " " * sub + sp)
+
+    new_text = "\n".join(lines) + "\n"
+    after = yaml.safe_load(new_text) or {}
+
+    # check: the edited entries hold the new values, everything else is unchanged
+    def same(a, b):
+        return (a is None) == (b is None) and (a is None or np.allclose(
+            np.asarray(a, float), np.asarray(b, float), atol=1e-3))
+    tb, ta = dict(before.get("target") or {}), dict(after.get("target") or {})
+    ok = (same(ta.get("waypoints"), wps)
+          and same(ta.get("speeds"), None if speeds is None else list(speeds))
+          and (starts is None or same(after.get("starts"), st)))
+    for k in set(before) | set(after):
+        if k not in ("starts", "target"):
+            ok &= before.get(k) == after.get(k)
+    for k in set(tb) | set(ta):
+        if k not in ("waypoints", "speeds"):
+            ok &= tb.get(k) == ta.get(k)
+    if not ok:
+        raise RuntimeError(f"Could not update {path} safely (unusual layout around "
+                           f"'starts' / 'target'); the file was not changed.")
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    os.replace(tmp, path)
     return path
 
 

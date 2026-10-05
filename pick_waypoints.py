@@ -20,7 +20,8 @@ Keys:
     s  save     Enter  save and quit
     (Zoom/Pan via the toolbar: while zoom/pan is active, clicks add no points.)
 
-Saved to scenarios/<name>.picks.json, which overrides the YAML values.
+Saved straight into scenarios/<name>.yaml: only `starts:` and
+`target: waypoints/speeds` are rewritten, comments and the rest are kept.
 Marked x = target path too close to / through an obstacle
 (clearance < TAR_RADIUS + SAFETY_MARGIN). Starts inside an obstacle are
 drawn with a red edge.
@@ -32,8 +33,20 @@ import sys
 if len(sys.argv) > 1:
     os.environ["SCENARIO"] = sys.argv[1]      # must be set BEFORE importing config
 
+# Bypass the input method (e.g. IBus + Unikey): Tk receives keys through XIM,
+# and the IME swallows letter keys such as 's' (Telex tone mark), so the
+# picker's shortcuts never arrive. The picker needs no text input.
+os.environ["XMODIFIERS"] = ""
+
 import numpy as np
 import matplotlib.pyplot as plt
+
+# The picker's keys clash with matplotlib's default shortcuts: 'p' would switch
+# on pan mode (after which clicks no longer add points), 's' would open the
+# save dialog, 'c' / 'r' would change the view. Remove those bindings.
+for _name, _keys in {"keymap.pan": "p", "keymap.save": "s",
+                     "keymap.back": "c", "keymap.home": "r"}.items():
+    plt.rcParams[_name] = [k for k in plt.rcParams[_name] if k != _keys]
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Circle, Rectangle
 
@@ -41,7 +54,7 @@ import config
 from config import (SCENARIO, SCENARIO_NAME, XLIM, YLIM, STARTS, START_ALTITUDE,
                     TAR_RADIUS, SAFETY_MARGIN, TAR_MAX_SPEED, TAR_SPLINE_DS, ROBOT_RADIUS,
                     TAR_SMOOTH_ENABLE)
-from target_manual import load_waypoints, save_picks, catmull_rom, check_path, clearance
+from target_manual import load_waypoints, save_to_scenario, catmull_rom, check_path, clearance
 
 MARGIN = TAR_RADIUS + SAFETY_MARGIN
 PICK_PX = 10          # hit radius (pixels) for selecting a point
@@ -162,7 +175,11 @@ class Picker:
 
     # ---------- events ----------
     def on_press(self, e):
-        if e.inaxes is not self.ax or self._toolbar_busy():
+        if e.inaxes is not self.ax:
+            return
+        if self._toolbar_busy():
+            print("[PICK] Pan/Zoom is active in the toolbar: click its button again "
+                  "to switch it off, then clicks add points.")
             return
         i = self._hit(e)
         p = self._new_point(float(e.xdata), float(e.ydata))
@@ -258,7 +275,11 @@ class Picker:
         if speeds is not None and len(speeds) != len(self.layers["target"]) - 1:
             print("[PICK] Waypoint count changed -> dropping old 'speeds' (using TAR_MAX_SPEED).")
             speeds = None
-        path = save_picks(self.layers["target"], speeds, self.layers["starts"])
+        try:
+            path = save_to_scenario(self.layers["target"], speeds, self.layers["starts"])
+        except RuntimeError as e:
+            print(f"[PICK] {e}")
+            return
         self.dirty = False
         print(f"[PICK] Saved {len(self.layers['target'])} waypoints and "
               f"{len(self.layers['starts'])} starts to {os.path.relpath(path)}")
@@ -266,5 +287,7 @@ class Picker:
 
 
 if __name__ == "__main__":
-    Picker()
+    # keep a reference: mpl_connect holds bound methods only weakly, so an
+    # unreferenced Picker is freed at once and the window ignores all input
+    picker = Picker()
     plt.show()
