@@ -71,7 +71,7 @@ class MPCProblem:
         p["nb_flag"] = opti.parameter(max(n_others, 1), 1)
         p["tgt"] = opti.parameter(1, 2)               # current target position
         p["w_search"] = opti.parameter()
-        p["slot"] = opti.parameter(1, 2)
+        p["slot"] = opti.parameter(H + 1, 2)          # slot position at each horizon step
         p["w_slot"] = opti.parameter()
         p["leader"] = opti.parameter()
         p["ref"] = opti.parameter(1, 2)               # next reference waypoint
@@ -141,7 +141,7 @@ class MPCProblem:
         # SEARCH: pull towards the target / satellite: pull towards the slot
         for k in range(H + 1):
             cost += p["w_search"] * ca.sumsqr(X[k, :2] - p["tgt"]) / Ls ** 2
-            cost += p["w_slot"] * ca.sumsqr(X[k, :2] - p["slot"]) / Ls ** 2
+            cost += p["w_slot"] * ca.sumsqr(X[k, :2] - p["slot"][k, :]) / Ls ** 2
         # leader CBF slack
         cost += cfg["W_leader_slack"] * ca.sum1(ca.sum2((S / Ls) ** 3))
 
@@ -200,7 +200,8 @@ class MPCProblem:
         o.set_value(p["nb_flag"], flags)
         o.set_value(p["tgt"], np.asarray(tgt, float)[:2].reshape(1, 2))
         o.set_value(p["w_search"], w_search)
-        o.set_value(p["slot"], np.asarray(slot, float)[:2].reshape(1, 2))
+        slot = np.asarray(slot, float)                # (2,) fixed point or (H+1, 2) trajectory
+        o.set_value(p["slot"], np.broadcast_to(slot[..., :2], (cfg["HORIZON_LENGTH"] + 1, 2)))
         o.set_value(p["w_slot"], w_slot)
         o.set_value(p["leader"], float(leader))
         o.set_value(p["ref"], np.asarray(ref, float)[:2].reshape(1, 2))

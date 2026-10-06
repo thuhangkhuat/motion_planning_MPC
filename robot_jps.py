@@ -398,16 +398,24 @@ class Robot:
     # built once and re-solved with new parameter values every step.
     # ============================================================
     def _path_carrot(self, dist):
-        """Point `dist` metres along traj_ref from the UAV. When the path is shorter,
-        the live slot: the path is only replanned once its goal drifts by
-        TARGET_REPLAN_THRESHOLD, so its end lags the moving slot by up to that much."""
+        """Point `dist` metres along traj_ref from the UAV, or None if the path is shorter."""
         P = np.vstack([self.state[:2], np.asarray(self.traj_ref)[1:, :2]])
         for a, b in zip(P[:-1], P[1:]):
             seg = float(np.linalg.norm(b - a))
             if seg >= dist:
                 return a + (b - a) * (dist / seg)
             dist -= seg
-        return np.asarray(self._slot[:2], float)
+        return None
+
+    def _slot_trajectory(self):
+        """(H+1, 2) slot position over the horizon: the leader's predicted path plus
+        this satellite's cell offset. A fixed slot point makes the MPC plan to stop
+        where the slot is NOW, so the satellite trails the moving formation."""
+        lp = self.leader_state_pred
+        cell = getattr(self, "my_slot_cell", None)
+        if lp is None or cell is None:
+            return np.asarray(self._slot[:2], float)
+        return np.asarray(lp)[:, :2] + np.asarray(cell, float) * (SLOT_SPACING_RATIO * VIEWING_RADIUS)
 
     def _brake_control(self):
         """Command that cancels the velocity in one step, scaled down to UMAX."""
@@ -457,11 +465,13 @@ class Robot:
         if self.mode == MODE_SEARCH:
             w_search = W_search_track
         elif self._slot is not None:
-            # pull along the planned path, not straight at the slot: a straight pull
-            # through an obstacle pins the UAV against the corridor. The path ends at
-            # the slot, or at the reachable cell closest to it when it is blocked.
-            slot = (self._path_carrot(VMAX * HORIZON_LENGTH * TIMESTEP)
-                    if self.traj_ref is not None else self._slot)
+            # far from the slot: pull along the planned path (a straight pull through
+            # an obstacle pins the UAV against the corridor; the path ends at the slot
+            # or at the reachable cell closest to it). Within one horizon of it: track
+            # the slot as it moves with the leader.
+            carrot = (self._path_carrot(VMAX * HORIZON_LENGTH * TIMESTEP)
+                      if self.traj_ref is not None else None)
+            slot = carrot if carrot is not None else self._slot_trajectory()
             w_slot = W_sat_slot
             w_tra = 0.0       # the target standoff ring would fight the slot pull
 
