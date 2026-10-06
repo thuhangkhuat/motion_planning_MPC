@@ -157,6 +157,9 @@ W_sat_spread = 2.0
 SAT_DISTANCE_RATIO = 1.9       # r_d = ratio * VIEWING_RADIUS
 DESIRED_SEPARATION_RATIO = 0.5 # DESIRED_SEPARATION = ratio * VIEWING_RADIUS (derived)
 SLOT_SPACING_RATIO = 2.0       # slot grid spacing = ratio * VIEWING_RADIUS (2 = adjacent FOVs)
+SLOT_CONTRACT = True           # near obstacles, pull slots in towards the leader instead of detouring
+SLOT_MIN_RATIO = 0.3           # contracted slot distance >= ratio * full slot distance
+SLOT_EXPAND_SPEED = 5.0        # m/s at which a contracted slot moves back out
 
 # ─── TRACK mode: leader ───
 W_leader_slack = 1e3           # penalty on the CBF visibility slack

@@ -150,9 +150,10 @@ class Robot:
         self.path = []
         self.traj_refs = []
         # per-step debug record (debug_viewer.py): MPC plan used at this step and
-        # [is_track, is_leader, mpc_fail_streak]
+        # [is_track, is_leader, mpc_fail_streak] and the formation contraction
         self.pred_hist = []
         self.status_hist = []
+        self.scale_hist = []
         self.full_path = None
         self.path_update_counter = 0
         self.cached_path = None
@@ -179,6 +180,8 @@ class Robot:
         self.pred_hist.append(self.states_prediction[:, :2].astype(np.float32))
         self.status_hist.append((self.mode == MODE_TRACK, self.is_leader_role,
                                  getattr(self, "mpc_fail_streak", 0)))
+        self.scale_hist.append(getattr(self, "slot_scale", 1.0)
+                               if getattr(self, "_slot", None) is not None else np.nan)
 
         # Shift predictive values
         self.states_prediction[:-1, :] = self.states_prediction[1:, :]
@@ -415,7 +418,8 @@ class Robot:
         cell = getattr(self, "my_slot_cell", None)
         if lp is None or cell is None:
             return np.asarray(self._slot[:2], float)
-        return np.asarray(lp)[:, :2] + np.asarray(cell, float) * (SLOT_SPACING_RATIO * VIEWING_RADIUS)
+        return np.asarray(lp)[:, :2] + np.asarray(cell, float) * (
+            SLOT_SPACING_RATIO * VIEWING_RADIUS * getattr(self, "slot_scale", 1.0))
 
     def _brake_control(self):
         """Command that cancels the velocity in one step, scaled down to UMAX."""
@@ -912,7 +916,61 @@ class Robot:
         # ── Cost kéo self về slot của nó ──
         dx, dy = cells[new_assign[self.index]]
         self.my_slot_cell = (dx, dy)
-        return np.array([lead[0] + dx * side, lead[1] + dy * side])
+        self._update_slot_scale(robots)
+        return lead + np.array([dx, dy], float) * side * self.slot_scale
+
+    # ============================================================
+    # Formation contraction near obstacles
+    # ------------------------------------------------------------
+    # A slot inside an obstacle, or behind one as seen from the leader, is moved
+    # in along the leader->slot ray to just before the first obstacle cell. The
+    # satellite then stays on the target's side instead of flying around the
+    # obstacle; coverage shrinks (FOVs overlap) until the obstacle is passed.
+    # ============================================================
+    def _free_ray_length(self, robots, origin, direction, length):
+        """Distance along `direction` from `origin` to the first cell that any UAV's
+        map marks as an obstacle (shared knowledge, so every UAV gets the same
+        answer), backed off by one cell; `length` if the ray is clear."""
+        step = 0.5 * GRID_RESOLUTION
+        s = np.arange(step, length + 1e-9, step)
+        P = np.asarray(origin, float)[None, :2] + s[:, None] * direction[None]
+        hit = np.zeros(len(s), bool)
+        for r in robots:
+            gm = getattr(getattr(r, "planner", None), "gmap", None)
+            if gm is None:
+                continue
+            gm.is_blocked(0, 0)                       # rebuilds the inflated layer if stale
+            ny, nx = gm.blocked.shape
+            ix = np.floor((P[:, 0] - gm.ox) / gm.resolution).astype(int)
+            iy = np.floor((P[:, 1] - gm.oy) / gm.resolution).astype(int)
+            inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+            b = gm.blocked[iy[inb], ix[inb]].astype(bool)
+            unk = getattr(gm, "unknown", None)
+            if unk is not None:                       # unseen space is not an obstacle
+                b &= ~unk[iy[inb], ix[inb]].astype(bool)
+            hit[inb] |= b
+        if not hit.any():
+            return length
+        return max(0.0, s[np.argmax(hit)] - GRID_RESOLUTION)
+
+    def _update_slot_scale(self, robots):
+        """self.slot_scale in [SLOT_MIN_RATIO, 1]: fraction of the slot distance that
+        is free along the leader->slot ray, now and along the leader's predicted
+        path (so the formation contracts before reaching the obstacle). Contracts
+        at once, expands at most SLOT_EXPAND_SPEED."""
+        if not SLOT_CONTRACT:
+            self.slot_scale = 1.0
+            return
+        cell = np.asarray(self.my_slot_cell, float)
+        full = float(np.linalg.norm(cell)) * SLOT_SPACING_RATIO * VIEWING_RADIUS
+        u = cell / np.linalg.norm(cell)
+        lp = self.leader_state_pred
+        pts = (np.asarray(lp)[::max(1, HORIZON_LENGTH // 4), :2] if lp is not None
+               else [self.leader_current_pos])
+        free = min(self._free_ray_length(robots, p, u, full) for p in pts)
+        target = float(np.clip(free / full, SLOT_MIN_RATIO, 1.0))
+        prev = getattr(self, "slot_scale", 1.0)
+        self.slot_scale = min(target, prev + SLOT_EXPAND_SPEED * TIMESTEP / full)
     # ============================================================
     # Cost slack cho leader visibility
     # ============================================================
