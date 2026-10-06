@@ -59,7 +59,7 @@ params:
   HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m
   VMAX: 10
   UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
-  ROBOT_RADIUS: 1.0         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
+  ROBOT_RADIUS: 0.5         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
   CORRIDOR_BOX: 25          # >= horizon reach
   CORRIDOR_BARRIER_EPS: 1.0
   COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost

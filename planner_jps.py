@@ -184,10 +184,17 @@ class PersistentLogOddsGrid:
                 occ_idx.append(lin)
 
         Lflat = self.L.reshape(-1)
+        occ = np.concatenate(occ_idx) if occ_idx else np.zeros(0, np.int64)
         if free_idx:
-            np.add.at(Lflat, np.concatenate(free_idx), self.l_free)
-        if occ_idx:
-            np.add.at(Lflat, np.concatenate(occ_idx), self.l_occ)
+            # a cell hit in this scan is not cleared by other rays grazing it
+            # (otherwise flying close along a wall erases the wall from the map)
+            free = np.concatenate(free_idx)
+            # nor a cell already known to be occupied (static obstacles: the LiDAR
+            # does not see other UAVs; revisit if moving obstacles are added)
+            keep = np.isin(free, occ) | (Lflat[free] >= self.occ_logit)
+            np.add.at(Lflat, free[~keep], self.l_free)
+        if occ.size:
+            np.add.at(Lflat, occ, self.l_occ)
 
         np.clip(self.L, self.l_min, self.l_max, out=self.L)
         self._dirty = True

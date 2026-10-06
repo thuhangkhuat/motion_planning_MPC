@@ -95,6 +95,18 @@ class IncrementalLogOddsGrid(PersistentLogOddsGrid):
                             self.sensing_radius)
         n = np.maximum((free_len - res) / step, 0).astype(int)
 
+        # cells hit in THIS scan: computed first so that free-space rays cannot
+        # clear them. Rays that graze a wall pass through its neighbouring cells;
+        # without this, a UAV flying close along a wall erases it from the map.
+        occ = []
+        if seen.any():
+            hx = rx + bin_range[seen] * ca[seen]
+            hy = ry + bin_range[seen] * sa[seen]
+            occ.append(self._lin(hx, hy))
+        if hp is not None:
+            occ.append(self._lin(hp[:, 0], hp[:, 1]))
+        occ = np.concatenate(occ) if occ else np.zeros(0, np.int64)
+
         Lflat = self.L.reshape(-1)
         nmax = int(n.max()) if nb else 0
         if nmax > 0:
@@ -108,17 +120,16 @@ class IncrementalLogOddsGrid(PersistentLogOddsGrid):
             ray = np.broadcast_to(np.arange(nb)[:, None], m.shape)[m]
             lin = iy[m] * self.size_x + ix[m]
             key = np.unique(ray.astype(np.int64) * ncell + lin)      # unique within a ray
-            np.add.at(Lflat, key % ncell, self.l_free)
+            cells = key % ncell
+            # also keep cells already known to be occupied: a 2 m cell whose wall
+            # runs through it is crossed by rays that miss the wall by centimetres.
+            # Obstacles are static (the LiDAR does not see other UAVs); revisit
+            # this if moving obstacles are added.
+            keep = np.isin(cells, occ) | (Lflat[cells] >= self.occ_logit)
+            np.add.at(Lflat, cells[~keep], self.l_free)
 
-        occ = []
-        if seen.any():
-            hx = rx + bin_range[seen] * ca[seen]
-            hy = ry + bin_range[seen] * sa[seen]
-            occ.append(self._lin(hx, hy))
-        if hp is not None:
-            occ.append(self._lin(hp[:, 0], hp[:, 1]))
-        if occ:
-            np.add.at(Lflat, np.concatenate(occ), self.l_occ)
+        if occ.size:
+            np.add.at(Lflat, occ, self.l_occ)
         np.clip(self.L, self.l_min, self.l_max, out=self.L)
         self._dirty = True
 

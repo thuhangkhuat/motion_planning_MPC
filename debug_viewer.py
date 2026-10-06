@@ -3,10 +3,10 @@ debug_viewer.py — Step through a finished run, with the view cropped around th
 
     python debug_viewer.py                          # latest run in runs/
     python debug_viewer.py runs/<dir>               # a given run (or its data.pkl)
-    python debug_viewer.py runs/<dir> --start 1200 --window 80
+    python debug_viewer.py runs/<dir> --start 1200 --window 80 --speed 4
 
 Keys:
-    space        play / pause                 [ / ]   slower / faster playback
+    space        play / pause                 [ / ]   playback speed /2, x2 (x1 = real time)
     right / left +-1 step                     up / down  +-10 steps
     pageup/down  +-100 steps                  home / end first / last step
     n / b        next / previous step where an MPC solve failed
@@ -27,6 +27,7 @@ import json
 import os
 import pickle
 import sys
+import time
 
 # Bypass the input method (IBus + Unikey would swallow letter keys, see pick_waypoints.py)
 os.environ["XMODIFIERS"] = ""
@@ -92,7 +93,7 @@ def halfspace_polygon(A, b, box):
 # Viewer
 # ============================================================
 class Viewer:
-    def __init__(self, run_dir, start, window):
+    def __init__(self, run_dir, start, window, speed=1.0):
         data, cfg = load_run(run_dir)
         sd, params = cfg.get("scenario_def", {}), cfg.get("params", {})
         self.ids = sorted(k for k in data if isinstance(k, int))
@@ -117,7 +118,10 @@ class Viewer:
                                       for k in np.flatnonzero(s[:self.T, 2] > 0)}), int)
 
         self.k = int(np.clip(start, 0, self.T - 1))
-        self.follow, self.playing, self.speed = True, False, 1
+        # speed = simulated seconds per wall-clock second; playback skips steps when
+        # drawing cannot keep up, so x1 is real time whatever the frame rate
+        self.follow, self.playing, self.speed = True, False, float(speed)
+        self._t_last, self._carry = None, 0.0
         self.show = {"corr": True, "pred": True, "ref": True, "trail": True}
 
         # ── figure ──
@@ -192,11 +196,12 @@ class Viewer:
         ax.set_ylim(box[2], box[3])
 
         lines = [f"step {k} / {self.T - 1}   t = {k * self.dt:.1f} s",
-                 f"target  ({tx:7.1f}, {ty:7.1f})",
-                 f"view    {'follow ±%.0f m' % self.W if self.follow else 'whole map'}"
-                 f"   play x{self.speed}{'  ▶' if self.playing else ''}", "",
-                 " UAV  mode    d_tgt   |v|   solve  MPC",
-                 " ---  ------  -----  -----  -----  ----"]
+                 f"play x{self.speed:g}{'  >' if self.playing else '  (paused)'}"]
+        if not self.playing:
+            lines += [f"target  ({tx:7.1f}, {ty:7.1f})",
+                      f"view    {'follow ±%.0f m' % self.W if self.follow else 'whole map'}", "",
+                      " UAV  mode    d_tgt   |v|   solve  MPC",
+                      " ---  ------  -----  -----  -----  ----"]
         for j, a in enumerate(self.u):
             P = self.paths[j]
             x, y = P[k, 1], P[k, 2]
@@ -240,14 +245,17 @@ class Viewer:
             role = "L" if leader else " "
             ms = f"{1000 * self.ct[k, j]:5.0f}" if self.ct is not None and k < len(self.ct) else "    -"
             mpc = "-" if st is None else ("FAIL" if failed else "ok")
-            lines.append(f" U{self.ids[j]:<2} {mode:<6}{role} {d:6.1f} {v:6.2f}  {ms}  {mpc}")
+            if not self.playing:
+                lines.append(f" U{self.ids[j]:<2} {mode:<6}{role} {d:6.1f} {v:6.2f}  {ms}  {mpc}")
 
-        nxt = self.fails[self.fails > k]
-        lines += ["", f"MPC failures: {len(self.fails)} steps"
-                      + (f", next at {nxt[0]}" if len(nxt) else "")]
-        lines += ["", "space play  ←/→ ±1  ↑/↓ ±10  PgUp/PgDn ±100",
-                  "n/b next/prev failure   +/- zoom   f follow",
-                  "c corridor  m MPC pred  r ref  t trails  [ ] speed"]
+        # the full table costs ~half of each frame to draw: shown only when paused
+        if not self.playing:
+            nxt = self.fails[self.fails > k]
+            lines += ["", f"MPC failures: {len(self.fails)} steps"
+                          + (f", next at {nxt[0]}" if len(nxt) else "")]
+            lines += ["", "space play  ←/→ ±1  ↑/↓ ±10  PgUp/PgDn ±100",
+                      "n/b next/prev failure   +/- zoom   f follow",
+                      "c corridor  m MPC pred  r ref  t trails  [ ] speed"]
         self.txt.set_text("\n".join(lines))
         ax.set_title("solid dots = MPC plan, thin = planner ref, dashed = corridor, "
                      "yellow ring = leader, red x = MPC failed", fontsize=8)
@@ -270,10 +278,17 @@ class Viewer:
         if self.k >= self.T - 1:
             self.toggle_play()
             return
-        self.goto(self.k + self.speed)
+        now = time.perf_counter()
+        self._carry += (now - self._t_last) * self.speed / self.dt
+        self._t_last = now
+        n = int(self._carry)
+        if n:
+            self._carry -= n
+            self.goto(self.k + n)
 
     def toggle_play(self):
         self.playing = not self.playing
+        self._t_last, self._carry = time.perf_counter(), 0.0
         (self.timer.start if self.playing else self.timer.stop)()
         self.draw()
 
@@ -303,9 +318,9 @@ class Viewer:
         elif key == "f":
             self.follow = not self.follow; self.draw()
         elif key == "]":
-            self.speed = min(self.speed * 2, 64); self.draw()
+            self.speed = min(self.speed * 2, 256); self.draw()
         elif key == "[":
-            self.speed = max(self.speed // 2, 1); self.draw()
+            self.speed = max(self.speed / 2, 0.125); self.draw()
         elif key in ("c", "m", "r", "t"):
             name = {"c": "corr", "m": "pred", "r": "ref", "t": "trail"}[key]
             self.show[name] = not self.show[name]; self.draw()
@@ -318,10 +333,12 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("run", nargs="?", help="run directory or its data.pkl (default: latest in runs/)")
     p.add_argument("--start", type=int, default=0, help="first step shown")
+    p.add_argument("--speed", type=float, default=1.0,
+                   help="playback speed, x real time (default 1; [ / ] change it while running)")
     p.add_argument("--window", type=float, default=None,
                    help="half size of the view around the target in m (default 4 * VIEWING_RADIUS)")
     a = p.parse_args()
-    viewer = Viewer(find_run(a.run), a.start, a.window)   # keep a reference (weak mpl callbacks)
+    viewer = Viewer(find_run(a.run), a.start, a.window, a.speed)   # keep a reference (weak mpl callbacks)
     plt.show()
     return viewer
 
