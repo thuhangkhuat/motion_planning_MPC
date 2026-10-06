@@ -928,13 +928,21 @@ class Robot:
     # obstacle; coverage shrinks (FOVs overlap) until the obstacle is passed.
     # ============================================================
     def _free_ray_length(self, robots, origin, direction, length):
-        """Distance along `direction` from `origin` to the first cell that any UAV's
-        map marks as an obstacle (shared knowledge, so every UAV gets the same
-        answer), backed off by one cell; `length` if the ray is clear."""
+        """How far along `direction` from `origin` the slot can sit, using every
+        UAV's map (shared knowledge, so every UAV gets the same answer):
+          1. line of sight: stop before the first OCCUPIED cell (the obstacle
+             itself, not its inflation). A ray that only grazes an obstacle's
+             inflated border is still a clear view; testing the inflated layer
+             here made slots jump inwards whenever the ray passed ~3 m from a
+             corner.
+          2. the slot point itself must be outside the inflated layer, so the
+             satellite can actually be there: step back until it is.
+        Returns `length` if the slot is fine where it is."""
         step = 0.5 * GRID_RESOLUTION
         s = np.arange(step, length + 1e-9, step)
         P = np.asarray(origin, float)[None, :2] + s[:, None] * direction[None]
-        hit = np.zeros(len(s), bool)
+        occ = np.zeros(len(s), bool)
+        blk = np.zeros(len(s), bool)
         for r in robots:
             gm = getattr(getattr(r, "planner", None), "gmap", None)
             if gm is None:
@@ -944,14 +952,17 @@ class Robot:
             ix = np.floor((P[:, 0] - gm.ox) / gm.resolution).astype(int)
             iy = np.floor((P[:, 1] - gm.oy) / gm.resolution).astype(int)
             inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+            occ[inb] |= gm.L[iy[inb], ix[inb]] >= gm.occ_logit
             b = gm.blocked[iy[inb], ix[inb]].astype(bool)
             unk = getattr(gm, "unknown", None)
             if unk is not None:                       # unseen space is not an obstacle
                 b &= ~unk[iy[inb], ix[inb]].astype(bool)
-            hit[inb] |= b
-        if not hit.any():
+            blk[inb] |= b
+        n = len(s) if not occ.any() else int(np.argmax(occ))   # samples before the obstacle
+        free = np.flatnonzero(~blk[:n])
+        if n == len(s) and len(free) and free[-1] == len(s) - 1:
             return length
-        return max(0.0, s[np.argmax(hit)] - GRID_RESOLUTION)
+        return float(s[free[-1]]) if len(free) else 0.0
 
     def _update_slot_scale(self, robots):
         """self.slot_scale in [SLOT_MIN_RATIO, 1]: fraction of the slot distance that
@@ -965,8 +976,17 @@ class Robot:
         full = float(np.linalg.norm(cell)) * SLOT_SPACING_RATIO * VIEWING_RADIUS
         u = cell / np.linalg.norm(cell)
         lp = self.leader_state_pred
-        pts = (np.asarray(lp)[::max(1, HORIZON_LENGTH // 4), :2] if lp is not None
-               else [self.leader_current_pos])
+        if lp is None:
+            pts = [self.leader_current_pos]
+        else:
+            # the leader's MPC plan (one horizon), then its final velocity extrapolated
+            # up to SLOT_LOOKAHEAD_TIME: moving a slot in by 20-35 m takes 3-4 s, more
+            # than one horizon, so a later contraction makes the satellite trail it
+            lp = np.asarray(lp)
+            pts = list(lp[::max(1, HORIZON_LENGTH // 4), :2])
+            t_extra = SLOT_LOOKAHEAD_TIME - HORIZON_LENGTH * TIMESTEP
+            for tau in np.arange(0.5, t_extra + 1e-9, 0.5):
+                pts.append(lp[-1, :2] + lp[-1, 3:5] * tau)
         free = min(self._free_ray_length(robots, p, u, full) for p in pts)
         target = float(np.clip(free / full, SLOT_MIN_RATIO, 1.0))
         prev = getattr(self, "slot_scale", 1.0)

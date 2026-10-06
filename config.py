@@ -160,6 +160,7 @@ SLOT_SPACING_RATIO = 2.0       # slot grid spacing = ratio * VIEWING_RADIUS (2 =
 SLOT_CONTRACT = True           # near obstacles, pull slots in towards the leader instead of detouring
 SLOT_MIN_RATIO = 0.3           # contracted slot distance >= ratio * full slot distance
 SLOT_EXPAND_SPEED = 5.0        # m/s at which a contracted slot moves back out
+SLOT_LOOKAHEAD_TIME = 5.0      # s ahead along the leader's path checked for obstacles
 
 # ─── TRACK mode: leader ───
 W_leader_slack = 1e3           # penalty on the CBF visibility slack
