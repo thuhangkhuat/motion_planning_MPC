@@ -1,0 +1,95 @@
+# Leader hand-off test: the target sprints faster than the UAVs can fly.
+# Units: metres, m/s. See scenarios/README.md for every key.
+#
+# The target alternates 5 m/s legs (the formation settles) with 13 m/s sprints
+# (> VMAX = 10). During a sprint the leader falls behind, the target leaves its
+# FOV and enters the FOV of the satellite on that side, which takes over as
+# leader. The four sprints go east, north, west and south, so each time a
+# different satellite should take over. Obstacles are sparse so that the
+# hand-offs come from the sprints, not from detours.
+
+description: leader hand-off test, 700 m field, 5 UAVs, 4 short sprints faster than VMAX
+xlim: [0, 700]
+ylim: [0, 700]
+viewing_radius: 25        # half side of the camera footprint (m)
+tar_max_speed: 5          # target speed on the legs without an entry in `speeds` (m/s)
+
+starts:                   # [x, y, z]; around the target's first waypoint
+- [100, 350, 30]
+- [100, 400, 30]
+- [50, 350, 30]
+- [100, 300, 30]
+- [150, 350, 30]
+
+target:
+  waypoints:              # edit with pick_waypoints.py (key t)
+  - [100, 350]
+  - [250, 350]            # settle
+  - [330, 350]            # sprint east (80 m)
+  - [420, 350]            # settle
+  - [450, 470]            # settle
+  - [450, 550]            # sprint north
+  - [450, 640]            # settle
+  - [300, 620]            # settle
+  - [220, 611]            # sprint west
+  - [130, 600]            # settle
+  - [120, 450]            # settle
+  - [124, 370]            # sprint south
+  - [130, 220]            # settle
+  - [300, 150]            # settle
+  # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
+  # target to the satellite ahead once; much longer sprints also outrun the new
+  # leader and the target is lost until it slows down.
+  speeds: [5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5]
+
+obstacles:                # fixed obstacles, added before the random ones
+  rects: []               # [x, y, w, h]
+  circles: []             # [cx, cy, r]
+
+generate:
+  seed: 3
+  density: 0.04           # sparse: hand-offs should come from the sprints
+  rect_size: [20, 60]     # side length range (m)
+  circle_radius: [10, 25] # radius range (m)
+  circle_fraction: 0.4
+  min_gap: 15             # clearance between obstacles (m)
+  border_margin: 10       # keep obstacles off the map border (m)
+  keep_clear_radius: 60   # free zone around UAV starts and target waypoints (m)
+  path_clearance: 30      # free corridor along the target legs (m): the formation flies around it
+
+params:
+  # ─── Dynamics / MPC ─── (same as scen1)
+  TIMESTEP: 0.1
+  HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m
+  VMAX: 10
+  UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
+  ROBOT_RADIUS: 0.5         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
+  CORRIDOR_BOX: 25          # >= horizon reach
+  CORRIDOR_BARRIER_EPS: 1.0
+  COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost
+  W_sat_slot: 10            # distances are scaled down, control effort is not: at 1 the slot pull
+                            # loses to W_u and satellites trail their slot by ~15 m
+  # ─── Sensing ───
+  SENSING_RADIUS: 50
+  SENSING_NEIGHBOR: 45      # >= 2 * reach + 2R
+  LIDAR_RANGE_MIN: 0.5
+  LIDAR_NOISE: 0.05
+  LIDAR_MARCH_STEP: 0.5
+  # ─── Occupancy grid / planner ───
+  GRID_RESOLUTION: 2.0      # ray spacing at 50 m is 1.75 m < 2 m
+  INFLATE_MARGIN: 1.0       # INFLATE_RADIUS = 2 m
+  START_SNAP_RADIUS: 20
+  GOAL_SNAP_RADIUS: 100       # (JPS planner only)
+  GOAL_CLAMP_MARGIN: 10
+  PLANNER: local
+  LOCAL_PLAN_RADIUS: 150      # planning window half size (m) -> 151 x 151 cells
+  UNKNOWN_POLICY: optimistic  # the target is usually far outside what the UAV has seen
+  UNKNOWN_COST: 1.5           # prefer known-free space when it is not much longer
+  TARGET_REPLAN_THRESHOLD: 15
+  PATH_DEVIATION_THRESHOLD: 20
+  # ─── Target estimation / target path ───
+  KF_OBS_NOISE_STD: 1.0
+  TAR_RADIUS: 1.0
+  SAFETY_MARGIN: 3.0
+  TAR_SPLINE_DS: 2.0
+  TARGET_ARRIVAL_TOL: 1.0

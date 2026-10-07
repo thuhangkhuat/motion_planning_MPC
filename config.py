@@ -190,6 +190,9 @@ SLOT_INVALID_PATIENCE = 3
 # GRID_CELLS = [(0, 1), (-1, 0)]
 # GRID_CELLS = [(0, 1), (-1, 0), (0, -1)]
 GRID_CELLS = [(0, 1), (-1, 0), (0, -1), (1, 0)]
+# Used in this order when there are more satellites than GRID_CELLS (e.g. 7 UAVs):
+# the corners touch two edge slots, so the FOVs stay one connected block
+EXTRA_CELLS = [(1, 1), (-1, 1), (-1, -1), (1, -1), (2, 0), (0, 2), (-2, 0), (0, -2)]
 
 SWITCH_MARGIN_RATIO = 0.5      # SWITCH_MARGIN = ratio * VIEWING_RADIUS (derived)
 OPEN_ALL_SLOTS = False
@@ -477,12 +480,10 @@ def validate_config():
     if os.path.isfile(picks_path(SCENARIO)):
         add("WARNING", f"{os.path.relpath(picks_path(SCENARIO))} is no longer read: picked points "
                        f"now live in the YAML. Copy them over (or re-pick and save) and delete it.")
-    slot_far = SLOT_SPACING_RATIO * VIEWING_RADIUS * max(np.hypot(*c) for c in GRID_CELLS)
-    track_exit = VIEWING_RADIUS + FORMATION_GAP + TRACK_EXIT_HYSTERESIS
-    if slot_far >= track_exit:
-        add("WARNING", f"Farthest satellite slot is {slot_far:.1f} m from the leader but satellites "
-                       f"leave TRACK at {track_exit:.1f} m: they drop out before reaching it "
-                       f"(lower SLOT_SPACING_RATIO or raise TRACK_EXIT_HYSTERESIS_RATIO).")
+    n_sat = NUM_ROBOT - 1
+    if n_sat > len(GRID_CELLS) + len(EXTRA_CELLS):
+        add("ERROR", f"{n_sat} satellites but only {len(GRID_CELLS) + len(EXTRA_CELLS)} slots "
+                     f"(GRID_CELLS + EXTRA_CELLS).")
     if ACCEL_TAU < 0:
         add("ERROR", f"ACCEL_TAU={ACCEL_TAU} must be >= 0.")
     if MPC_BACKEND == "rebuild" and (ACCEL_TAU > 0 or D_FRAC != 0):

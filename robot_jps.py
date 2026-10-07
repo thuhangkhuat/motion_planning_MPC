@@ -877,7 +877,8 @@ class Robot:
             m = min(4, len(GRID_CELLS))        # 4 ô axis (vòng trong)
         else:
             m = min(n, len(GRID_CELLS))        # n ô đầu, danh tính cố định
-        cells = GRID_CELLS[:m]
+        m = max(m, n)                          # every satellite needs a slot
+        cells = (list(GRID_CELLS) + list(EXTRA_CELLS))[:m]
         slot_pos = [lead + np.array([dx, dy]) * side for dx, dy in cells]
 
         sats = sorted(self.satellite_indices)
@@ -1073,6 +1074,11 @@ class Robot:
 
         d_enter = VIEWING_RADIUS + FORMATION_GAP      # >= 2L theo khuyến nghị
         d_exit  = d_enter + TRACK_EXIT_HYSTERESIS
+        cell = getattr(self, "my_slot_cell", None)
+        if cell is not None:
+            # a corner / outer slot is farther than d_enter: never drop out on the way to it
+            d_exit = max(d_exit, float(np.hypot(*cell)) * SLOT_SPACING_RATIO * VIEWING_RADIUS
+                         + TRACK_EXIT_HYSTERESIS)
         d2leader = float(np.linalg.norm(self.state[:2] - leader_pos))
 
         if self.mode == MODE_SEARCH:
