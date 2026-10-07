@@ -1,14 +1,14 @@
-# Leader hand-off test: the target sprints faster than the UAVs can fly.
-# Units: metres, m/s. See scenarios/README.md for every key.
+# Leader hand-off test (copy of scen3 with sprints): the target sprints faster
+# than the UAVs can fly. Units: metres, m/s. See scenarios/README.md for every key.
 #
-# The target alternates 5 m/s legs (the formation settles) with 13 m/s sprints
-# (> VMAX = 10). During a sprint the leader falls behind, the target leaves its
-# FOV and enters the FOV of the satellite on that side, which takes over as
-# leader. The four sprints go east, north, west and south, so each time a
-# different satellite should take over. Obstacles are sparse so that the
-# hand-offs come from the sprints, not from detours.
+# Same map, starts and target path as scen3. Most legs are 5 m/s; four legs are
+# 13 m/s sprints (> VMAX = 10) in four directions: leg 4 east, leg 7 south,
+# leg 11 north, leg 18 west. During a sprint the leader falls behind, the target
+# leaves its FOV and enters the FOV of the satellite on that side, which takes
+# over as leader. CBF_BOX_RATIO 0.5 keeps the target well inside the leader's FOV
+# on the 5 m/s legs, so the hand-offs come from the sprints only.
 
-description: leader hand-off test, 700 m field, 5 UAVs, 4 short sprints faster than VMAX
+description: leader hand-off test, scen3 path with 4 sprints at 13 m/s, CBF box 0.5
 xlim: [0, 700]
 ylim: [0, 700]
 viewing_radius: 25        # half side of the camera footprint (m)
@@ -64,6 +64,7 @@ target:
   # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
   # target to the satellite ahead once; much longer sprints also outrun the new
   # leader and the target is lost until it slows down.
+  speeds: [5, 5, 5, 5, 13, 5, 5, 13, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: # [x, y, w, h]
@@ -145,6 +146,7 @@ obstacles:                # fixed obstacles, added before the random ones
 #   path_clearance: 30      # free corridor along the target legs (m): the formation flies around it
 
 params:
+  CBF_BOX_RATIO: 0.5       # target within +-12.5 m of the leader's FOV centre (FOV +-25 m)
   # ─── Dynamics / MPC ─── (same as scen1)
   TIMESTEP: 0.1
   HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m

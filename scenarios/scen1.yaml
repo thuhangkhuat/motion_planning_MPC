@@ -46,7 +46,9 @@ target:
   - [470.759, 351.886]
   - [415.638, 584.469]
   - [512.436, 675.889]
-  # speeds: [5, 5, 3, 5, 5]   # optional, one per segment
+  # one per leg; 13 m/s (> VMAX = 10) sprints force a leader hand-off:
+  # leg 5 north (90 m), leg 7 east (108 m), leg 10 south (70 m), leg 17 west (76 m)
+  speeds: [5, 5, 5, 5, 5, 13, 5, 13, 5, 5, 13, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: # [x, y, w, h]
@@ -131,6 +133,7 @@ obstacles:                # fixed obstacles, added before the random ones
 #   path_clearance: 12      # free corridor along the target segments (m); 0 = off
 
 params:
+  CBF_BOX_RATIO: 0.5        # target within +-12.5 m of the leader's FOV centre: hand-offs only on sprints
   # ─── Dynamics / MPC ───
   TIMESTEP: 0.1
   HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m

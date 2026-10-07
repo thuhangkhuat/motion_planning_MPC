@@ -13,6 +13,7 @@ Keys:
     + / -        zoom in / out (half size of the window around the target)
     f            follow the target <-> whole map
     c  corridors     m  MPC predictions     r  planner reference     t  trails
+    x  red x on UAVs whose MPC solve failed (also --no-fail-marks at start)
     q / escape   quit
 The slider at the bottom jumps to any step.
 
@@ -93,7 +94,7 @@ def halfspace_polygon(A, b, box):
 # Viewer
 # ============================================================
 class Viewer:
-    def __init__(self, run_dir, start, window, speed=1.0):
+    def __init__(self, run_dir, start, window, speed=1.0, fail_marks=True):
         data, cfg = load_run(run_dir)
         sd, params = cfg.get("scenario_def", {}), cfg.get("params", {})
         self.ids = sorted(k for k in data if isinstance(k, int))
@@ -122,7 +123,8 @@ class Viewer:
         # drawing cannot keep up, so x1 is real time whatever the frame rate
         self.follow, self.playing, self.speed = True, False, float(speed)
         self._t_last, self._carry = None, 0.0
-        self.show = {"corr": True, "pred": True, "ref": True, "trail": True}
+        self.show = {"corr": True, "pred": True, "ref": True, "trail": True,
+                     "fail": bool(fail_marks)}
 
         # ── figure ──
         self.fig = plt.figure(figsize=(13, 8.5))
@@ -214,8 +216,9 @@ class Viewer:
             st = self.status[j][k] if self.status[j] is not None and k < len(self.status[j]) else None
             leader = st is not None and bool(st[1])
             failed = st is not None and st[2] > 0
+            mark = failed and self.show["fail"]
             a["lead"].set_data([x] if leader else [], [y] if leader else [])
-            a["fail"].set_data([x] if failed else [], [y] if failed else [])
+            a["fail"].set_data([x] if mark else [], [y] if mark else [])
 
             pr = self.pred[j][k] if self.pred[j] is not None and k < len(self.pred[j]) else None
             if self.show["pred"] and pr is not None:
@@ -255,10 +258,11 @@ class Viewer:
                           + (f", next at {nxt[0]}" if len(nxt) else "")]
             lines += ["", "space play  ←/→ ±1  ↑/↓ ±10  PgUp/PgDn ±100",
                       "n/b next/prev failure   +/- zoom   f follow",
-                      "c corridor  m MPC pred  r ref  t trails  [ ] speed"]
+                      "c corridor  m MPC pred  r ref  t trails  x fail marks  [ ] speed"]
         self.txt.set_text("\n".join(lines))
         ax.set_title("solid dots = MPC plan, thin = planner ref, dashed = corridor, "
-                     "yellow ring = leader, red x = MPC failed", fontsize=8)
+                     "yellow ring = leader"
+                     + (", red x = MPC failed" if self.show["fail"] else ""), fontsize=8)
 
         self._from_code = True
         self.slider.set_val(k)
@@ -321,8 +325,8 @@ class Viewer:
             self.speed = min(self.speed * 2, 256); self.draw()
         elif key == "[":
             self.speed = max(self.speed / 2, 0.125); self.draw()
-        elif key in ("c", "m", "r", "t"):
-            name = {"c": "corr", "m": "pred", "r": "ref", "t": "trail"}[key]
+        elif key in ("c", "m", "r", "t", "x"):
+            name = {"c": "corr", "m": "pred", "r": "ref", "t": "trail", "x": "fail"}[key]
             self.show[name] = not self.show[name]; self.draw()
         elif key in ("q", "escape"):
             plt.close(self.fig)
@@ -337,8 +341,11 @@ def main():
                    help="playback speed, x real time (default 1; [ / ] change it while running)")
     p.add_argument("--window", type=float, default=None,
                    help="half size of the view around the target in m (default 4 * VIEWING_RADIUS)")
+    p.add_argument("--no-fail-marks", action="store_true",
+                   help="start with the red x (MPC failed) hidden; key x toggles it")
     a = p.parse_args()
-    viewer = Viewer(find_run(a.run), a.start, a.window, a.speed)   # keep a reference (weak mpl callbacks)
+    viewer = Viewer(find_run(a.run), a.start, a.window, a.speed,
+                    fail_marks=not a.no_fail_marks)   # keep a reference (weak mpl callbacks)
     plt.show()
     return viewer
 
