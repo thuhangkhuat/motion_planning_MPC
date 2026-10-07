@@ -48,6 +48,14 @@ def _MPC_CFG():
 
 
 class Robot:
+    # Slot assignment shared by the whole team (what the leader would broadcast).
+    # Each UAV used to run Hungarian + hysteresis on its own: UAVs that entered
+    # TRACK at different times kept different, equally cheap assignments, and
+    # two satellites could hold the same cell forever. Now the first UAV that
+    # needs it in a step computes it, the others in that step reuse it, and
+    # the hysteresis compares against the team's previous assignment.
+    _team_assign = {"step": None, "key": None, "assign": None}
+
     def __init__(self, index, state: np.array, goal: np.array, control=np.zeros(3)):
         # Robot state and control
         self.time_stamp = 0.0
@@ -886,6 +894,29 @@ class Robot:
         if self.index not in pos_of:
             return None
 
+        shared = Robot._team_assign
+        step = int(round(self.time_stamp / TIMESTEP))
+        key = (self.leader_index, tuple(sats), m)
+        if shared["step"] is not None and step < shared["step"]:
+            shared.update(step=None, key=None, assign=None)    # a new run started
+        if shared["step"] == step and shared["key"] == key:
+            new_assign = shared["assign"]                      # already computed this step
+        else:
+            new_assign = self._assign_slots(sats, pos_of, slot_pos, m, shared)
+            shared.update(step=step, key=key, assign=new_assign)
+        self._assign = new_assign
+
+        # ── Cost kéo self về slot của nó ──
+        dx, dy = cells[new_assign[self.index]]
+        self.my_slot_cell = (dx, dy)
+        self._update_slot_scale(robots)
+        return lead + np.array([dx, dy], float) * side * self.slot_scale
+
+    def _assign_slots(self, sats, pos_of, slot_pos, m, shared):
+        """Hungarian satellite -> slot, keeping the team's previous assignment
+        unless the new one is cheaper by SWITCH_MARGIN."""
+        n = len(sats)
+
         # ── Ma trận chi phí n×m (m >= n) ──
         C = np.array([[float(np.linalg.norm(pos_of[i] - slot_pos[j]))
                     for j in range(m)] for i in sats])
@@ -906,19 +937,16 @@ class Robot:
         new_cost = sum(C[sats.index(i)][new_assign[i]] for i in sats)
 
         # ── Hysteresis: giữ assignment cũ trừ khi cái mới rẻ hơn SWITCH_MARGIN ──
-        prev = getattr(self, '_assign', None)
-        if (prev is not None and all(i in prev for i in sats)
-                and all(prev[i] < m for i in sats)):
+        # (the team's previous assignment, valid while the leader and the
+        # satellite set are unchanged; it is a permutation, so no shared slot)
+        prev = shared["assign"]
+        if (prev is not None and shared["key"] is not None
+                and shared["key"][1] == tuple(sats)
+                and all(i in prev and prev[i] < m for i in sats)):
             prev_cost = sum(C[sats.index(i)][prev[i]] for i in sats)
             if new_cost > prev_cost - SWITCH_MARGIN:
                 new_assign = prev
-        self._assign = new_assign
-
-        # ── Cost kéo self về slot của nó ──
-        dx, dy = cells[new_assign[self.index]]
-        self.my_slot_cell = (dx, dy)
-        self._update_slot_scale(robots)
-        return lead + np.array([dx, dy], float) * side * self.slot_scale
+        return new_assign
 
     # ============================================================
     # Formation contraction near obstacles

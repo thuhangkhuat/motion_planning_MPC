@@ -89,7 +89,7 @@ W_corridor = 1.0               # barrier cost inside the safe corridor
 CORRIDOR_BARRIER_EPS = 0.1     # barrier 1/(d + eps) regulariser (m)
 CORRIDOR_BOX = None            # pydecomp local bounding box half size (m); None -> VIEWING_RADIUS (derived)
 DT_CBF_GAMMA = 0.5             # discrete CBF decay rate (leader visibility)
-CBF_BOX_RATIO = 0.1            # leader CBF keeps the target within +-ratio*VIEWING_RADIUS
+CBF_BOX_RATIO = 0.95            # leader CBF keeps the target within +-ratio*VIEWING_RADIUS
 STANDOFF_TIME = 1.0            # desired standoff = VIEWING_RADIUS - TAR_MAX_SPEED * STANDOFF_TIME (s)
 
 # Weights that older scenarios only defined through 'params'
