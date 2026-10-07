@@ -24,23 +24,51 @@ starts:                   # [x, y, z]; around the target's first waypoint
 target:
   waypoints:              # edit with pick_waypoints.py (key t)
   - [100, 350]
-  - [250, 350]            # settle
-  - [330, 350]            # sprint east (80 m)
-  - [420, 350]            # settle
-  - [450, 470]            # settle
-  - [450, 550]            # sprint north
-  - [450, 640]            # settle
-  - [300, 620]            # settle
-  - [220, 611]            # sprint west
-  - [130, 600]            # settle
-  - [120, 450]            # settle
-  - [124, 370]            # sprint south
-  - [130, 220]            # settle
-  - [300, 150]            # settle
+  - [124, 370]
+  - [204.367, 311.255]
+  - [307.886, 309.373]
+  - [367.175, 339.488]
+  - [396.349, 291.493]
+  - [366.234, 262.319]
+  - [172.37, 192.678]
+  - [183.663, 107.98]
+  - [290.947, 136.213]
+  - [333.296, 94.805]
+  - [372.821, 124.92]
+  - [457.519, 135.272]
+  - [475.4, 236.909]
+  - [531.865, 240.674]
+  - [538.453, 101.393]
+  - [601.506, 103.275]
+  - [606.211, 165.387]
+  - [563.862, 187.032]
+  - [567.627, 240.674]
+  - [606.211, 245.379]
+  - [624.092, 355.487]
+  - [489.516, 332.9]
+  - [418.935, 401.6]
+  - [498.927, 469.358]
+  - [427.404, 578.524]
+  - [373.762, 529.588]
+  - [296.593, 544.645]
+  - [278.713, 593.582]
+  - [221.306, 540.881]
+  - [146.019, 538.058]
+  - [146.019, 483.474]
+  - [243.892, 479.71]
+  - [297.534, 449.595]
+  - [321.062, 469.358]
+  - [361.528, 443.949]
+  - [293.77, 381.837]
+  - [183.663, 380.896]
+  - [125.315, 473.123]
+  - [58.498, 532.411]
+  - [101.788, 602.052]
+  - [156.371, 613.345]
+  - [182.722, 579.465]
   # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
   # target to the satellite ahead once; much longer sprints also outrun the new
   # leader and the target is lost until it slows down.
-  speeds: [5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: []               # [x, y, w, h]
@@ -48,7 +76,7 @@ obstacles:                # fixed obstacles, added before the random ones
 
 generate:
   seed: 3
-  density: 0.08           # sparse: hand-offs should come from the sprints
+  density: 0.17          # sparse: hand-offs should come from the sprints
   rect_size: [20, 60]     # side length range (m)
   circle_radius: [10, 25] # radius range (m)
   circle_fraction: 0.4
