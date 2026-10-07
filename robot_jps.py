@@ -55,6 +55,10 @@ class Robot:
     # needs it in a step computes it, the others in that step reuse it, and
     # the hysteresis compares against the team's previous assignment.
     _team_assign = {"step": None, "key": None, "assign": None}
+    # Leader choice shared the same way: with a sticky leader kept per UAV,
+    # UAVs could disagree after a hand-off (A follows B while B follows C),
+    # leaving steps with no leader or with two.
+    _team_leader = {"step": None, "leader": None}
 
     def __init__(self, index, state: np.array, goal: np.array, control=np.zeros(3)):
         # Robot state and control
@@ -502,7 +506,7 @@ class Robot:
             A_cost=A_cost, b_cost=b_cost, use_corr_cost=A_cost is not None,
             others=[r.states_prediction for r in others],
             nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
-            tgt=target_pos[0, :2], w_search=w_search, slot=slot, w_slot=w_slot,
+            tgt=self._target_trajectory(target_pos[0, :2]), w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
             w_tra=w_tra,
             X_init=self._mpc_X, U_init=self._mpc_U)
@@ -912,6 +916,22 @@ class Robot:
         self._update_slot_scale(robots)
         return lead + np.array([dx, dy], float) * side * self.slot_scale
 
+    def _target_trajectory(self, pos):
+        """Target over the horizon, constant velocity from the Kalman estimate,
+        for the leader CBF. The velocity is capped at 2*VMAX against filter
+        spikes; before the filter has started the target is held fixed."""
+        tr = self.target_tracker
+        if not tr.initialized:
+            return pos
+        v = np.asarray(tr.get_velocity(), float)[:2]
+        sp = np.linalg.norm(v)
+        if not np.isfinite(sp):
+            return pos
+        if sp > 2 * VMAX:
+            v *= 2 * VMAX / sp
+        k = np.arange(HORIZON_LENGTH + 1)[:, None] * TIMESTEP
+        return np.asarray(pos, float)[None, :2] + k * v[None]
+
     def _assign_slots(self, sats, pos_of, slot_pos, m, shared):
         """Hungarian satellite -> slot, keeping the team's previous assignment
         unless the new one is cheaper by SWITCH_MARGIN."""
@@ -1063,14 +1083,22 @@ class Robot:
             if d_inf <= L_strict:  seers_strict.append(r.index)
             if d_inf <= L_relaxed: seers_relaxed.append(r.index)
 
-        if self.leader_index is not None and self.leader_index in seers_relaxed:
-            pass  # giữ leader cũ -> tránh churn (BỎ proximity-handoff)
-        elif seers_strict:
-            self.leader_index = min(seers_strict, key=lambda i: dist_to_target[i])
-        elif seers_relaxed:
-            self.leader_index = min(seers_relaxed, key=lambda i: dist_to_target[i])
-        else:
-            self.leader_index = None  # mất target hoàn toàn
+        shared = Robot._team_leader
+        step = int(round(self.time_stamp / TIMESTEP))
+        if shared["step"] is not None and step < shared["step"]:
+            shared.update(step=None, leader=None)              # a new run started
+        if shared["step"] != step:
+            prev = shared["leader"]
+            if prev is not None and prev in seers_relaxed:
+                leader = prev  # giữ leader cũ -> tránh churn (BỎ proximity-handoff)
+            elif seers_strict:
+                leader = min(seers_strict, key=lambda i: dist_to_target[i])
+            elif seers_relaxed:
+                leader = min(seers_relaxed, key=lambda i: dist_to_target[i])
+            else:
+                leader = None  # mất target hoàn toàn
+            shared.update(step=step, leader=leader)
+        self.leader_index = shared["leader"]
 
         # ─── (2) Không leader -> mọi UAV SEARCH (reacquire) ───
         if self.leader_index is None:

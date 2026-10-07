@@ -69,7 +69,7 @@ class MPCProblem:
         p["w_corr"] = opti.parameter()
         p["others"] = [opti.parameter(H + 1, 2) for _ in range(n_others)]
         p["nb_flag"] = opti.parameter(max(n_others, 1), 1)
-        p["tgt"] = opti.parameter(1, 2)               # current target position
+        p["tgt"] = opti.parameter(H + 1, 2)           # predicted target position at each step
         p["w_search"] = opti.parameter()
         p["slot"] = opti.parameter(H + 1, 2)          # slot position at each horizon step
         p["w_slot"] = opti.parameter()
@@ -99,13 +99,15 @@ class MPCProblem:
         Lcbf = cfg["CBF_BOX_RATIO"] * cfg["VIEWING_RADIUS"]
         gam = cfg["DT_CBF_GAMMA"]
         relax = BIG * (1 - p["leader"])
-        tgt = p["tgt"]
+        # h(x_k, t_k) = Lcbf - |x_k - t_k| per axis, with t_k the target predicted
+        # at step k: a fixed t_k lets a moving target drift out of the box by
+        # ~v*dt per step, which matters once the box is close to the FOV.
+        def h_box(x, t):
+            return ca.vertcat(Lcbf - (x[0] - t[0]), Lcbf - (t[0] - x[0]),
+                              Lcbf - (x[1] - t[1]), Lcbf - (t[1] - x[1]))
         for i in range(H):
-            c, n = X[i, :2], X[i + 1, :2]
-            h_cur = ca.vertcat(Lcbf - (c[0] - tgt[0]), Lcbf - (tgt[0] - c[0]),
-                               Lcbf - (c[1] - tgt[1]), Lcbf - (tgt[1] - c[1]))
-            h_nxt = ca.vertcat(Lcbf - (n[0] - tgt[0]), Lcbf - (tgt[0] - n[0]),
-                               Lcbf - (n[1] - tgt[1]), Lcbf - (tgt[1] - n[1]))
+            h_cur = h_box(X[i, :2], p["tgt"][i, :])
+            h_nxt = h_box(X[i + 1, :2], p["tgt"][i + 1, :])
             for d in range(4):
                 opti.subject_to(h_nxt[d] - (1 - gam) * h_cur[d] >= -S[i, d] - relax)
         opti.subject_to(ca.vec(S) >= 0)
@@ -140,7 +142,7 @@ class MPCProblem:
                 cost += cfg["W_collision_avoid"] * v * v
         # SEARCH: pull towards the target / satellite: pull towards the slot
         for k in range(H + 1):
-            cost += p["w_search"] * ca.sumsqr(X[k, :2] - p["tgt"]) / Ls ** 2
+            cost += p["w_search"] * ca.sumsqr(X[k, :2] - p["tgt"][0, :]) / Ls ** 2
             cost += p["w_slot"] * ca.sumsqr(X[k, :2] - p["slot"][k, :]) / Ls ** 2
         # leader CBF slack
         cost += cfg["W_leader_slack"] * ca.sum1(ca.sum2((S / Ls) ** 3))
@@ -198,7 +200,8 @@ class MPCProblem:
         flags = np.zeros((max(self.n_others, 1), 1))
         flags[:len(nb_flags), 0] = nb_flags
         o.set_value(p["nb_flag"], flags)
-        o.set_value(p["tgt"], np.asarray(tgt, float)[:2].reshape(1, 2))
+        tgt = np.asarray(tgt, float)                  # (2,) fixed point or (H+1, 2) trajectory
+        o.set_value(p["tgt"], np.broadcast_to(tgt[..., :2], (cfg["HORIZON_LENGTH"] + 1, 2)))
         o.set_value(p["w_search"], w_search)
         slot = np.asarray(slot, float)                # (2,) fixed point or (H+1, 2) trajectory
         o.set_value(p["slot"], np.broadcast_to(slot[..., :2], (cfg["HORIZON_LENGTH"] + 1, 2)))
