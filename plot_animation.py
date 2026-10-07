@@ -5,7 +5,11 @@ import math
 import pickle
 
 from matplotlib.patches import Circle, Rectangle
+import run_select                     # before config: use the run's scenario and map
+_RUN = run_select.select()
 from config import *
+if _RUN:
+    globals().update(run_select.snapshot_map(_RUN))
 
 
 # ============================================================

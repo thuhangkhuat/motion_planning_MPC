@@ -314,7 +314,10 @@ class LocalGridPlanner:
         # 1) start cell (snap out of inflated obstacles)
         sx, sy = gm.world_to_grid(self.start[0], self.start[1])
         if not gm.in_bounds(sx, sy):
-            return False, [], set(), set(), 0
+            # UAV slightly outside the map (e.g. drifted over the border): plan from
+            # the nearest cell inside instead of failing every step from then on
+            sx = int(np.clip(sx, 0, gm.size_x - 1))
+            sy = int(np.clip(sy, 0, gm.size_y - 1))
         if gm.blocked[sy, sx]:
             r = gm.nearest_free(sx, sy, max_radius=self._cells(self.start_snap_radius))
             if r[0] is None:

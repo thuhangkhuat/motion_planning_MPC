@@ -48,7 +48,7 @@ obstacles:                # fixed obstacles, added before the random ones
 
 generate:
   seed: 3
-  density: 0.04           # sparse: hand-offs should come from the sprints
+  density: 0.08           # sparse: hand-offs should come from the sprints
   rect_size: [20, 60]     # side length range (m)
   circle_radius: [10, 25] # radius range (m)
   circle_fraction: 0.4

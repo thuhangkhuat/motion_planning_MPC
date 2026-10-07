@@ -942,7 +942,10 @@ class Robot:
         step = 0.5 * GRID_RESOLUTION
         s = np.arange(step, length + 1e-9, step)
         P = np.asarray(origin, float)[None, :2] + s[:, None] * direction[None]
-        occ = np.zeros(len(s), bool)
+        # the map border counts as an obstacle: a slot beyond it is pulled in
+        # (the planner clamps its goals there, but the MPC slot pull would not)
+        (x0, y0, x1, y1), m = WORLD_BOUNDS, GOAL_CLAMP_MARGIN
+        occ = ~((P[:, 0] >= x0 + m) & (P[:, 0] <= x1 - m) & (P[:, 1] >= y0 + m) & (P[:, 1] <= y1 - m))
         blk = np.zeros(len(s), bool)
         for r in robots:
             gm = getattr(getattr(r, "planner", None), "gmap", None)
