@@ -17,6 +17,8 @@ Mouse (acts on the active layer):
 Keys:
     z  undo     c  clear active layer     p  toggle spline preview
     r  regenerate the random map around the current points (generated maps only)
+    f  freeze the map: save + write the obstacles shown into `obstacles:` and
+       comment out `generate:` (the map then no longer follows the seed)
     s  save     Enter  save and quit
     (Zoom/Pan via the toolbar: while zoom/pan is active, clicks add no points.)
 
@@ -220,6 +222,8 @@ class Picker:
             self.regenerate()
         elif e.key == "s":
             self.save()
+        elif e.key == "f":
+            self.save(freeze=True)
         elif e.key == "enter":
             self.save(); plt.close(self.fig); return
         self.redraw()
@@ -264,7 +268,7 @@ class Picker:
                           + ("  (unsaved)" if self.dirty else ""), fontsize=9)
         self.fig.canvas.draw_idle()
 
-    def save(self):
+    def save(self, freeze=False):
         if len(self.layers["target"]) < 2:
             print("[PICK] At least 2 target waypoints are required, not saved.")
             return
@@ -276,11 +280,16 @@ class Picker:
             print("[PICK] Waypoint count changed -> dropping old 'speeds' (using TAR_MAX_SPEED).")
             speeds = None
         try:
-            path = save_to_scenario(self.layers["target"], speeds, self.layers["starts"])
+            path = save_to_scenario(self.layers["target"], speeds, self.layers["starts"],
+                                    obstacles=(self.rects, self.circles) if freeze else None)
         except RuntimeError as e:
             print(f"[PICK] {e}")
             return
         self.dirty = False
+        if freeze:
+            self.raw = config.load_scenario(SCENARIO)      # no `generate:` any more
+            print(f"[PICK] Map frozen: {len(self.rects)} rects and {len(self.circles)} "
+                  f"circles written to `obstacles:`, `generate:` commented out.")
         print(f"[PICK] Saved {len(self.layers['target'])} waypoints and "
               f"{len(self.layers['starts'])} starts to {os.path.relpath(path)}")
         self.redraw()

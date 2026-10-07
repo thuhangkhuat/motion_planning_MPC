@@ -49,6 +49,12 @@ itself. Only `starts:` and `target: waypoints:` / `speeds:` are rewritten;
 comments and every other line are kept. Each point is written on one line, so
 comments placed between list items are dropped.
 
+Key `f` freezes the map: it saves, writes the obstacles shown (generated +
+fixed) into `obstacles: rects / circles`, and comments out the `generate:`
+block. From then on the map no longer depends on the seed, and moving a
+start or a waypoint no longer adds or removes obstacles. To go back,
+uncomment `generate:` and empty `obstacles:` again.
+
 ## Generated maps
 
 The same `generate` block always gives the same map: obstacles are placed

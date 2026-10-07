@@ -72,6 +72,17 @@ def _value_end(lines, i):
     return j
 
 
+def _block_end(lines, i):
+    """End (exclusive) of the top-level block that starts on line i: up to the
+    next top-level key, with trailing blank / comment lines left outside."""
+    j = next((j for j in range(i + 1, len(lines))
+              if _is_value(lines[j]) and _indent(lines[j]) == 0
+              and not lines[j].startswith("- ")), len(lines))
+    while j > i + 1 and not _is_value(lines[j - 1]):
+        j -= 1
+    return j
+
+
 def _key_line(line, key):
     """`key:` keeping the line's indent and trailing comment, dropping an inline value."""
     rest = line.split(":", 1)[1]
@@ -89,12 +100,18 @@ def _set_list(lines, i, key, items):
     lines[i:end] = [_key_line(lines[i], key)] + [" " * ind + "- " + _flow(p) for p in items]
 
 
-def save_to_scenario(waypoints, speeds=None, starts=None, scenario=SCENARIO):
+def save_to_scenario(waypoints, speeds=None, starts=None, scenario=SCENARIO,
+                     obstacles=None):
     """
     Write target waypoints / speeds and UAV starts into scenarios/<name>.yaml.
     Only `starts:`, `target: waypoints:` and `target: speeds:` are rewritten;
     comments and every other line stay as they are. speeds=None removes an
     existing `speeds:` entry (e.g. after the number of waypoints changed).
+
+    obstacles=(rects, circles) freezes the map: both lists are written into
+    `obstacles:` and the `generate:` block is commented out, so the map no
+    longer depends on the seed or on the keep-clear zones around the points.
+
     The result is parsed back and compared before the file is replaced.
     """
     import yaml
@@ -142,6 +159,33 @@ def save_to_scenario(waypoints, speeds=None, starts=None, scenario=SCENARIO):
         else:
             lines.insert(_value_end(lines, w), " " * sub + sp)
 
+    # ── obstacles (freeze the generated map) ──
+    if obstacles is not None:
+        rects = [[float(v) for v in r] for r in obstacles[0]]
+        circles = [[float(v) for v in c] for c in np.asarray(obstacles[1], float).reshape(-1, 3)]
+        o = _find_key(lines, "obstacles", 0, len(lines), 0)
+        if o is None:
+            lines += ["", "obstacles:"]
+            o = len(lines) - 1
+        for key, items in (("rects", rects), ("circles", circles)):
+            o_end = _block_end(lines, o)
+            k = _find_key(lines, key, o + 1, o_end, 2)
+            if k is None:
+                lines.insert(o_end, "  " + key + ":")
+                k = o_end
+            if items:
+                _set_list(lines, k, key, items)
+            else:
+                lines[k:_value_end(lines, k)] = [_key_line(lines[k], key).replace(
+                    key + ":", key + ": []", 1)]
+        g = _find_key(lines, "generate", 0, len(lines), 0)
+        if g is not None:
+            g_end = _block_end(lines, g)
+            lines[g:g_end] = (["# generate: frozen into `obstacles:` by pick_waypoints.py "
+                               "(key f). To use the seed again, uncomment this block",
+                               "# and empty `obstacles:` (or keep only the fixed ones)."]
+                              + ["# " + ln if ln.strip() else ln for ln in lines[g:g_end]])
+
     new_text = "\n".join(lines) + "\n"
     after = yaml.safe_load(new_text) or {}
 
@@ -153,15 +197,21 @@ def save_to_scenario(waypoints, speeds=None, starts=None, scenario=SCENARIO):
     ok = (same(ta.get("waypoints"), wps)
           and same(ta.get("speeds"), None if speeds is None else list(speeds))
           and (starts is None or same(after.get("starts"), st)))
+    if obstacles is not None:
+        ob = after.get("obstacles") or {}
+        ok &= (same(ob.get("rects") or None, rects or None)
+               and same(ob.get("circles") or None, circles or None)
+               and "generate" not in after)
+    edited = ("starts", "target") + (("obstacles", "generate") if obstacles is not None else ())
     for k in set(before) | set(after):
-        if k not in ("starts", "target"):
+        if k not in edited:
             ok &= before.get(k) == after.get(k)
     for k in set(tb) | set(ta):
         if k not in ("waypoints", "speeds"):
             ok &= tb.get(k) == ta.get(k)
     if not ok:
         raise RuntimeError(f"Could not update {path} safely (unusual layout around "
-                           f"'starts' / 'target'); the file was not changed.")
+                           f"'starts' / 'target' / 'obstacles'); the file was not changed.")
 
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
