@@ -78,7 +78,7 @@ target:
   # one per leg; 13 m/s (> VMAX = 10) sprints force a leader hand-off:
   # leg 3 east (86 m), leg 9 south (65 m), leg 18 west (86 m), leg 28 north (88 m),
   # leg 36 south (87 m), leg 45 north (77 m)
-  speeds: [5, 5, 5, 13, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5]
+  speeds: [5, 5, 5, 10, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: # [x, y, w, h]

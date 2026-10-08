@@ -16,13 +16,13 @@ tar_max_speed: 5          # target speed on the legs without an entry in `speeds
 
 starts:                   # [x, y, z]; around the target's first waypoint
 - [100, 350, 30]
-- [100, 400, 30]
-- [50, 350, 30]
+- [70.732, 475.946, 30]
+- [25.56, 403.482, 30]
 - [100, 300, 30]
-- [150, 350, 30]
+- [201.543, 379.955, 30]
 - [225.071, 343.252, 30]
 - [162.018, 475.946, 30]
-- [66.968, 475.005, 30]
+- [40.617, 276.435, 30]
 - [174.252, 583.23, 30]
 
 target:
@@ -64,7 +64,7 @@ target:
   # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
   # target to the satellite ahead once; much longer sprints also outrun the new
   # leader and the target is lost until it slows down.
-  speeds: [5, 5, 5, 5, 13, 5, 5, 13, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+  speeds: [5, 5, 5, 5, 10, 5, 5, 10, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: # [x, y, w, h]
