@@ -190,6 +190,12 @@ W_bounds_slack = 1e4           # penalty on leaving WORLD_BOUNDS (soft-hard, lik
 # feasible; see mpc_problem.py)
 CORRIDOR_RECOVER_ACCEL_RATIO = 0.5
 CORRIDOR_RECOVER_HOLD = 0.3    # s
+# Braking room: at the end of the MPC horizon the UAV must be able to stop before
+# every obstacle face of its corridor, braking at ratio * UMAX (see mpc_problem.py);
+# the corridor is not switched to a polytope in which it could no longer stop.
+CORRIDOR_BRAKE = True
+CORRIDOR_BRAKE_ACCEL_RATIO = 0.8
+CORRIDOR_FACE_TOL = 0.05       # m: a corridor face is an obstacle face if a LiDAR point lies on it
 
 # ─── Mode switch hysteresis (counter based) ───
 K_IN_THRESHOLD = 3             # consecutive cycles seeing the target -> TRACK

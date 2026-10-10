@@ -42,7 +42,8 @@ def _MPC_CFG():
     keys = ["HORIZON_LENGTH", "TIMESTEP", "ROBOT_RADIUS", "VMAX", "UMAX", "W_u", "W_gui",
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
-            "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
+            "CORRIDOR_BRAKE", "CORRIDOR_BRAKE_ACCEL_RATIO", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -248,6 +249,7 @@ class Robot:
 
         target_pos = self.goal[:3].reshape(1, 3)
         self.list_A, self.list_b = self.generateSafeCorridor(self.traj_ref, obstacle_points)
+        self._scan_points = np.asarray(obstacle_points, float).reshape(-1, 2)
         neighbor_robots = self.getNeighbors(robots)
 
         if MPC_BACKEND == "parametric":
@@ -460,6 +462,73 @@ class Robot:
         self._mpc_X = self._mpc_U = None              # the stale plan is no warm start either
         return Uc[0]
 
+    # ============================================================
+    # Corridor polytope selection
+    # ============================================================
+    def _obstacle_faces(self, A, b):
+        """1 for the faces that lie on a LiDAR point (obstacle faces), 0 for
+        the faces of pydecomp's bounding box (see CORRIDOR_BRAKE)."""
+        pts = getattr(self, "_scan_points", None)
+        A = np.asarray(A, float).reshape(-1, 2)
+        b = np.asarray(b, float).reshape(-1)
+        if pts is None or not len(pts):
+            return np.zeros(len(b))
+        d = np.abs(b[:, None] - A @ pts.T).min(axis=1)
+        return (d <= CORRIDOR_FACE_TOL).astype(float)
+
+    def _can_stop_in(self, A, b, mask):
+        """True if, braking now at CORRIDOR_BRAKE_ACCEL_RATIO * UMAX, the UAV
+        stops before every obstacle face (mask, R margin included) of A, b."""
+        A = np.asarray(A, float).reshape(-1, 2)
+        b = np.asarray(b, float).reshape(-1)
+        mask = np.asarray(mask) > 0
+        vn = np.maximum(A @ self.state[3:5], 0.0)
+        need = vn * (ACCEL_TAU + TIMESTEP) + vn ** 2 / (2 * CORRIDOR_BRAKE_ACCEL_RATIO * UMAX)
+        room = b - ROBOT_RADIUS - A @ self.state[:2]
+        return bool(np.all(need[mask] <= room[mask] + 1e-6))
+
+    def _select_polytope(self):
+        """
+        Hard corridor polytope for this step:
+          1. a new polytope that contains the UAV and in which it can still stop;
+          2. else the previous one, if it still contains the UAV, it can stop in
+             it and no current LiDAR point lies inside it (obstacles are static,
+             but a point seen now that falls inside means it is not free);
+          3. else a polytope containing the UAV, new first, then the previous
+             one (it may be unable to stop: the MPC may fail and brake);
+          4. else the polytope the UAV is least outside of (the hard corridor
+             is never dropped; the MPC's recovery rule brings it back inside).
+        Switching to a new polytope in which the UAV can no longer stop made the
+        MPC infeasible for ~1 s while it slid into an obstacle's margin (scen2).
+        Returns (A, b, obstacle-face mask); a kept polytope keeps the mask from
+        the scan it was built from (new LiDAR points rarely lie on old faces).
+        """
+        p = self.state[:2]
+        polys = [(A, b, self._obstacle_faces(A, b)) for A, b in zip(self.list_A, self.list_b)]
+        inside = [q for q in polys if np.all(q[0] @ p - np.ravel(q[1]) <= 1e-5)]
+        if not CORRIDOR_BRAKE:
+            if inside:
+                return inside[0]
+        else:
+            for q in inside:
+                if self._can_stop_in(*q):
+                    return q
+            prev = getattr(self, "_active_poly", None)
+            prev_ok = False
+            if prev is not None:
+                A, b = np.asarray(prev[0], float), np.ravel(prev[1]).astype(float)
+                pts = getattr(self, "_scan_points", np.zeros((0, 2)))
+                pts_inside = len(pts) and np.any(np.all(pts @ A.T < b - 1e-6, axis=1))
+                prev_ok = bool(np.all(A @ p - b <= 1e-5)) and not pts_inside
+                if prev_ok and self._can_stop_in(A, b, prev[2]):
+                    return prev
+            if inside:
+                return inside[0]
+            if prev_ok:                     # contains the UAV, even if it cannot stop in it
+                return prev
+        k = int(np.argmin([np.max(q[0] @ p - np.ravel(q[1])) for q in polys]))
+        return polys[k]
+
     def _fallback_control(self):
         """
         Control when the MPC fails. The first MPC_FAILS_BEFORE_BRAKE consecutive
@@ -476,21 +545,13 @@ class Robot:
 
     def _control_parametric(self, robots, neighbor_robots, target_pos):
         active_A = active_b = None
+        brake_mask = None
         if self.list_A:
-            for A, b in zip(self.list_A, self.list_b):
-                if np.all(A @ self.state[:2] - b.flatten() <= 1e-5):
-                    active_A, active_b = A, b
-                    break
-            else:
-                # outside every polytope: the hard corridor used to be dropped
-                # altogether, and the MPC planned straight through the obstacle.
-                # Use the polytope the UAV is least outside of; the MPC's recovery
-                # rule (mpc_problem.py) then lets it go no further out, and brings
-                # it back inside (CORRIDOR_RECOVER_ACCEL_RATIO / _HOLD).
-                k = int(np.argmin([np.max(A @ self.state[:2] - b.flatten())
-                                   for A, b in zip(self.list_A, self.list_b)]))
-                active_A, active_b = self.list_A[k], self.list_b[k]
+            active_A, active_b, brake_mask = self._select_polytope()
+            self._active_poly = (active_A, active_b, brake_mask)
             self.corridors.append({'A': active_A, 'b': active_b})
+        else:
+            self._active_poly = None             # no obstacle in range: nothing to keep
 
         is_leader = self.is_leader_role          # updated in computeControlSignal
         others = [r for r in robots if r.index != self.index]
@@ -538,7 +599,7 @@ class Robot:
             nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
             tgt=self._target_trajectory(target_pos[0, :2]), w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
-            w_tra=w_tra,
+            w_tra=w_tra, brake_mask=brake_mask,
             X_init=self._mpc_X, U_init=self._mpc_U)
         if ok:
             self._mpc_X, self._mpc_U = Xs, Us
