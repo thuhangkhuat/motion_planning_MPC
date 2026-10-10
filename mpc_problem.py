@@ -68,6 +68,7 @@ class MPCProblem:
         p["x0"] = opti.parameter(1, 6)
         p["A_hard"] = opti.parameter(n_faces, 2)
         p["b_hard"] = opti.parameter(n_faces, 1)
+        p["corr_relax"] = opti.parameter(n_faces, 1)  # current intrusion into the R margin, per face
         p["A_cost"] = opti.parameter(n_faces, 2)
         p["b_cost"] = opti.parameter(n_faces, 1)
         p["w_corr"] = opti.parameter()
@@ -90,8 +91,19 @@ class MPCProblem:
             opti.subject_to(X[i + 1, :] == ca.mtimes(X[i, :], Ad.T) + ca.mtimes(U[i, :], Bd.T))
 
         # ── corridor (hard) ──
-        for i in range(H + 1):
-            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R)
+        # X[0] is the measured state and is not constrained: a UAV already inside
+        # the R margin of a face (by e) made the problem infeasible at every step,
+        # it braked, stayed there and failed again (a 65 s deadlock in scen2).
+        # Instead, within the first CORRIDOR_RECOVER_STEPS steps the UAV may stay
+        # inside the margin by at most e: e for the first half (a UAV at rest
+        # cannot move away at once: acceleration lag), then shrinking linearly to
+        # 0. It never goes deeper than now and is out of the margin after that
+        # time. A UAV outside the margin has e = 0, i.e. the plain constraint
+        # A p <= b - R at every step.
+        K = max(2, int(cfg["CORRIDOR_RECOVER_STEPS"]))
+        for i in range(1, H + 1):
+            allow = p["corr_relax"] * min(1.0, max(0.0, (K - i) / (K / 2)))
+            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R + allow)
 
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
         # Soft-hard: a slack with a large penalty keeps the problem feasible when
@@ -217,6 +229,8 @@ class MPCProblem:
         Ac, bc = self._pad(A_cost, b_cost)
         o.set_value(p["A_hard"], Ah)
         o.set_value(p["b_hard"], bh)
+        x_now = np.asarray(x0, float).reshape(-1)[:2]
+        o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["ROBOT_RADIUS"])))
         o.set_value(p["A_cost"], Ac)
         o.set_value(p["b_cost"], bc)
         o.set_value(p["w_corr"], cfg["W_corridor"] if use_corr_cost else 0.0)

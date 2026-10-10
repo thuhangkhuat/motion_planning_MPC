@@ -42,7 +42,7 @@ def _MPC_CFG():
     keys = ["HORIZON_LENGTH", "TIMESTEP", "ROBOT_RADIUS", "VMAX", "UMAX", "W_u", "W_gui",
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
-            "WORLD_BOUNDS", "W_bounds_slack", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_STEPS", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -481,6 +481,15 @@ class Robot:
                 if np.all(A @ self.state[:2] - b.flatten() <= 1e-5):
                     active_A, active_b = A, b
                     break
+            else:
+                # outside every polytope: the hard corridor used to be dropped
+                # altogether, and the MPC planned straight through the obstacle.
+                # Use the polytope the UAV is least outside of; the MPC's recovery
+                # rule (mpc_problem.py) then lets it go no further out, and brings
+                # it back inside within CORRIDOR_RECOVER_STEPS.
+                k = int(np.argmin([np.max(A @ self.state[:2] - b.flatten())
+                                   for A, b in zip(self.list_A, self.list_b)]))
+                active_A, active_b = self.list_A[k], self.list_b[k]
             self.corridors.append({'A': active_A, 'b': active_b})
 
         is_leader = self.is_leader_role          # updated in computeControlSignal

@@ -183,6 +183,8 @@ W_uav_slack = 1e4              # penalty on violating UAV_SAFE_DISTANCE (soft-ha
 W_collision_avoid = 5.0        # soft repulsion below COLLISION_AVOID_DISTANCE
 COLLISION_AVOID_RATIO = 3.0    # COLLISION_AVOID_DISTANCE = max(ratio * R, 2.5 * UAV_SAFE_DISTANCE) (derived)
 W_bounds_slack = 1e4           # penalty on leaving WORLD_BOUNDS (soft-hard, like W_uav_slack)
+CORRIDOR_RECOVER_STEPS = 10    # a UAV inside a corridor face's R margin must leave it within this many
+                               # MPC steps and may never go deeper (keeps the hard corridor feasible)
 
 # ─── Mode switch hysteresis (counter based) ───
 K_IN_THRESHOLD = 3             # consecutive cycles seeing the target -> TRACK
