@@ -94,15 +94,19 @@ class MPCProblem:
         # X[0] is the measured state and is not constrained: a UAV already inside
         # the R margin of a face (by e) made the problem infeasible at every step,
         # it braked, stayed there and failed again (a 65 s deadlock in scen2).
-        # Instead, within the first CORRIDOR_RECOVER_STEPS steps the UAV may stay
-        # inside the margin by at most e: e for the first half (a UAV at rest
-        # cannot move away at once: acceleration lag), then shrinking linearly to
-        # 0. It never goes deeper than now and is out of the margin after that
-        # time. A UAV outside the margin has e = 0, i.e. the plain constraint
-        # A p <= b - R at every step.
-        K = max(2, int(cfg["CORRIDOR_RECOVER_STEPS"]))
+        # Instead the UAV may stay inside the margin by at most what it can have
+        # covered by then: allow(t) = max(0, e - s(t)), with s(t) = 0 for
+        # t <= CORRIDOR_RECOVER_HOLD (acceleration lag) and then the distance
+        # travelled from rest at CORRIDOR_RECOVER_ACCEL_RATIO * UMAX. It never goes
+        # deeper than now, a UAV at rest can always comply (half of UMAX), and the
+        # time to get out grows with e: ~0.7 s for 0.25 m, ~1.6 s for 2.25 m (a
+        # fixed 1 s deadline was infeasible for 2.25 m, another deadlock in scen2).
+        # A UAV outside the margin has e = 0: plain A p <= b - R at every step.
+        a_rec = cfg["CORRIDOR_RECOVER_ACCEL_RATIO"] * cfg["UMAX"]
+        t_hold = cfg["CORRIDOR_RECOVER_HOLD"]
         for i in range(1, H + 1):
-            allow = p["corr_relax"] * min(1.0, max(0.0, (K - i) / (K / 2)))
+            s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
+            allow = ca.fmax(0, p["corr_relax"] - s_i)
             opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R + allow)
 
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──

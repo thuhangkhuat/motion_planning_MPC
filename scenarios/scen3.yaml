@@ -64,7 +64,7 @@ target:
   # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
   # target to the satellite ahead once; much longer sprints also outrun the new
   # leader and the target is lost until it slows down.
-  speeds: [5, 5, 5, 5, 10, 5, 5, 10, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+  speeds: [5, 5, 5, 5, 13, 5, 5, 13, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
 
 obstacles:                # fixed obstacles, added before the random ones
   rects: # [x, y, w, h]
