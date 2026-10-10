@@ -84,10 +84,11 @@ class IncrementalLogOddsGrid(PersistentLogOddsGrid):
             d = hp - np.array([rx, ry])
             rng = np.hypot(d[:, 0], d[:, 1])
             ang = np.arctan2(d[:, 1], d[:, 0])
-            b = ((ang + np.pi) / (2 * np.pi) * nb).astype(int) % nb
+            # bins centred on the LiDAR ray angles (see PersistentLogOddsGrid.observe)
+            b = np.round((ang + np.pi) / (2 * np.pi) * nb).astype(int) % nb
             np.minimum.at(bin_range, b, rng)
 
-        ang = -np.pi + (np.arange(nb) + 0.5) * (2 * np.pi / nb)
+        ang = -np.pi + np.arange(nb) * (2 * np.pi / nb)
         ca, sa = np.cos(ang), np.sin(ang)
         finite = np.isfinite(bin_range)
         seen = finite & (bin_range <= self.sensing_radius)

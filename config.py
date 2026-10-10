@@ -38,7 +38,9 @@ LIDAR_MODE = "analytic"        # "analytic" (exact, vectorised) | "march" (origi
 # ─── Occupancy grid + JPS planner ───
 GRID_RESOLUTION = 0.5          # cell size (m)
 INFLATE_MARGIN = 0.2           # INFLATE_RADIUS = ROBOT_RADIUS + INFLATE_MARGIN (derived)
-GRID_RAY_BINS = 360            # angular bins used to integrate a scan into the grid
+GRID_RAY_BINS = None           # angular bins used to integrate a scan into the grid; None ->
+                               # one per LiDAR ray, round(2*pi / LIDAR_ANGULAR_RES) (derived).
+                               # More bins than rays leaves empty bins, carved free through obstacles.
 WORLD_BOUNDS = None            # (xmin, ymin, xmax, ymax); None -> from XLIM/YLIM (derived)
 START_SNAP_RADIUS = 10.0       # search radius to move a blocked start to a free cell (m)
 GOAL_SNAP_RADIUS = 30.0        # search radius to move a blocked goal to a free cell (m)
@@ -354,6 +356,8 @@ if CORRIDOR_BOX is None:
     CORRIDOR_BOX = VIEWING_RADIUS
 if WORLD_BOUNDS is None:
     WORLD_BOUNDS = (float(XLIM[0]), float(YLIM[0]), float(XLIM[1]), float(YLIM[1]))
+if GRID_RAY_BINS is None:
+    GRID_RAY_BINS = int(round(2 * np.pi / LIDAR_ANGULAR_RES))
 
 
 # Output files
@@ -439,10 +443,11 @@ def validate_config():
                        f"{GRID_RESOLUTION:.2f} m: obstacle surfaces get holes in the grid. "
                        f"Keep SENSING_RADIUS <= {GRID_RESOLUTION / LIDAR_ANGULAR_RES:.1f} m "
                        f"or refine LIDAR_ANGULAR_RES.")
-    bin_gap = SENSING_RADIUS * 2 * np.pi / GRID_RAY_BINS
-    if bin_gap > GRID_RESOLUTION:
-        add("WARNING", f"GRID_RAY_BINS={GRID_RAY_BINS} gives {bin_gap:.2f} m between bins at max "
-                       f"range > GRID_RESOLUTION: free space is under-carved.")
+    n_rays = int(round(2 * np.pi / LIDAR_ANGULAR_RES))
+    if GRID_RAY_BINS != n_rays:
+        add("ERROR", f"GRID_RAY_BINS={GRID_RAY_BINS} != LiDAR rays per turn {n_rays}: bins "
+                     f"without a ray are carved free through obstacles (more bins), or rays "
+                     f"are merged (fewer). Leave GRID_RAY_BINS unset.")
     if GRID_RESOLUTION > SENSING_RADIUS / 4:
         add("WARNING", f"GRID_RESOLUTION={GRID_RESOLUTION:.2f} m leaves fewer than 4 cells "
                        f"inside SENSING_RADIUS={SENSING_RADIUS:.2f} m.")

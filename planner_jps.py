@@ -129,6 +129,12 @@ class PersistentLogOddsGrid:
     # OBSERVE: cập nhật map từ 1 lần quét LiDAR
     #   robot_pos  : (x, y) gốc tia
     #   hit_points : Nx2(3) điểm LiDAR đập vào bề mặt vật cản
+    # A bin without a hit is carved free over the whole sensing range, so every
+    # bin must hold a LiDAR ray: bin bi is centred on the angle -pi + bi*2pi/n,
+    # the angles of a LiDAR with n rays per turn starting at -pi, and n_bins must
+    # equal that ray count (config derives GRID_RAY_BINS from LIDAR_ANGULAR_RES).
+    # With 360 bins for 180 rays every other bin was empty and was carved free
+    # straight through the obstacles, so their insides read as observed free.
     # ==========================================================
     def observe(self, robot_pos, hit_points):
         rx, ry = float(robot_pos[0]), float(robot_pos[1])
@@ -143,7 +149,7 @@ class PersistentLogOddsGrid:
             d = hp - np.array([rx, ry])
             rng = np.hypot(d[:, 0], d[:, 1])
             ang = np.arctan2(d[:, 1], d[:, 0])               # [-pi, pi]
-            b = ((ang + np.pi) / (2 * np.pi) * self.n_bins).astype(int) % self.n_bins
+            b = np.round((ang + np.pi) / (2 * np.pi) * self.n_bins).astype(int) % self.n_bins
             for bi, ri in zip(b, rng):
                 if ri < bin_range[bi]:
                     bin_range[bi] = ri
@@ -153,7 +159,7 @@ class PersistentLogOddsGrid:
 
         two_pi = 2 * np.pi
         for bi in range(self.n_bins):
-            ang = -np.pi + (bi + 0.5) * (two_pi / self.n_bins)
+            ang = -np.pi + bi * (two_pi / self.n_bins)
             ca, sa = np.cos(ang), np.sin(ang)
             r_hit = bin_range[bi]
             seen = np.isfinite(r_hit) and r_hit <= self.sensing_radius
