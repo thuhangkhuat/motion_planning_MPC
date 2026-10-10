@@ -163,11 +163,15 @@ class MPCProblem:
         standoff = (cfg["STANDOFF_DISTANCE"] / Ls) ** 2
         cost += cfg["W_gui"] * p["s_ref"] * d_ref ** 2
         cost += p["w_tra"] * (1 - p["s_ref"]) * (d_goal - standoff) ** 2
-        # corridor barrier
+        # corridor barrier. dist is clamped at 0: outside the margin (a UAV
+        # recovering into the corridor, or a cost polytope that does not contain
+        # it) 1/(dist + eps) has a pole at dist = -eps, so every path back inside
+        # had infinite cost and IPOPT failed (U5 at rest 2.2 m outside, scen2).
+        # The hard corridor with its recovery rule handles that case.
         eps = cfg["CORRIDOR_BARRIER_EPS"]
         for i in range(H):
             dist = p["b_cost"] - ca.mtimes(p["A_cost"], X[i, :2].T) - R
-            cost += p["w_corr"] * ca.sum1(Ls / (dist + eps))
+            cost += p["w_corr"] * ca.sum1(Ls / (ca.fmax(dist, 0) + eps))
         # soft collision margin to every other UAV
         d_safe = cfg["COLLISION_AVOID_DISTANCE"]
         for k in range(H + 1):

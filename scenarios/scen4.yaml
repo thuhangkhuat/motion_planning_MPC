@@ -7,7 +7,7 @@
 description: 1000 m field, 5 UAVs, random obstacles (seed 7)
 xlim: [0, 1000]
 ylim: [0, 1000]
-viewing_radius: 15        # half side of the camera footprint (m)
+viewing_radius: 25        # half side of the camera footprint (m)
 tar_max_speed: 5          # target speed (m/s)
 
 starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
@@ -189,10 +189,12 @@ params:
   HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m
   VMAX: 10
   UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
-  ROBOT_RADIUS: 1.0         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
+  ROBOT_RADIUS: 0.5         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
   CORRIDOR_BOX: 25          # >= horizon reach
   CORRIDOR_BARRIER_EPS: 1.0
   COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost
+  W_sat_slot: 10            # distances are scaled down, control effort is not: at 1 the slot pull
+                            # loses to W_u and satellites trail their slot by ~15 m
   # ─── Sensing ───
   SENSING_RADIUS: 50
   SENSING_NEIGHBOR: 45      # >= 2 * reach + 2R
