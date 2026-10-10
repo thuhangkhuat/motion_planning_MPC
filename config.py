@@ -106,7 +106,11 @@ COST_ACCEL_SCALE = 1.0         # controls enter the cost divided by this (m/s^2)
 
 # ─── IPOPT ───
 IPOPT_OPTIONS = {
-    'ipopt.max_iter': 10000,
+    # A normal solve takes a few tens of iterations (~30 ms). An infeasible step
+    # (e.g. the hard corridor cannot be kept at the current speed) used to run
+    # to 10000 iterations, ~16 s, before failing and braking anyway. An iteration
+    # limit (not a CPU-time limit) keeps the runs reproducible across machines.
+    'ipopt.max_iter': 500,
     'ipopt.print_level': 0,
     'ipopt.tol': 1e-4,
     'ipopt.acceptable_tol': 1e-2,

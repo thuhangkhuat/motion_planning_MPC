@@ -319,7 +319,12 @@ class LocalGridPlanner:
             sx = int(np.clip(sx, 0, gm.size_x - 1))
             sy = int(np.clip(sy, 0, gm.size_y - 1))
         if gm.blocked[sy, sx]:
-            r = gm.nearest_free(sx, sy, max_radius=self._cells(self.start_snap_radius))
+            # prefer a cell observed free (the side the UAV came from) over unknown
+            # cells, which include the never-seen inside of the obstacle
+            rad = self._cells(self.start_snap_radius)
+            r = gm.nearest_free(sx, sy, max_radius=rad, known=True)
+            if r[0] is None:
+                r = gm.nearest_free(sx, sy, max_radius=rad)
             if r[0] is None:
                 return False, [], set(), set(), 0
             sx, sy = r

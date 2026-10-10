@@ -232,9 +232,18 @@ class PersistentLogOddsGrid:
         return np.where(self.blocked, -1, 1).tolist()
 
     # ---- nearest free (xoáy ốc) ----
-    def nearest_free(self, ix, iy, max_radius=20):
+    def nearest_free(self, ix, iy, max_radius=20, known=False):
+        """Nearest free cell in growing square rings. known=True also requires
+        the cell to have been observed free: the inside of an obstacle is never
+        observed and stays unknown, which the optimistic policy treats as free,
+        so a UAV that ends up in an obstacle's inflated border could otherwise
+        be snapped INTO the obstacle and plan straight through it."""
         self._ensure()
-        if self.is_free(ix, iy):
+
+        def ok(x, y):
+            return self.is_free(x, y) and not (known and self.L[y, x] > self.free_logit)
+
+        if ok(ix, iy):
             return ix, iy
         for r in range(1, max_radius + 1):
             for dy in range(-r, r + 1):
@@ -242,7 +251,7 @@ class PersistentLogOddsGrid:
                     if abs(dx) != r and abs(dy) != r:
                         continue
                     nx, ny = ix + dx, iy + dy
-                    if self.is_free(nx, ny):
+                    if ok(nx, ny):
                         return nx, ny
         return None, None
 
