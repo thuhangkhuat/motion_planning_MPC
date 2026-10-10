@@ -307,6 +307,14 @@ def main(args):
                            + (f", IPOPT fallback {n_fb}" if n_fb else ""))
             log.info(solver_line)
             summary += "\n       " + solver_line
+        planners = [r.planner for r in robots if hasattr(getattr(r, "planner", None), "n_jps")]
+        if planners and planners[0].search == "jps":
+            n_j = sum(p.n_jps for p in planners)
+            n_f = sum(p.n_jps_fallback for p in planners)
+            planner_line = (f"Local planner JPS: {n_j + n_f} plans, Dijkstra fallback {n_f} "
+                            f"({100 * n_f / max(n_j + n_f, 1):.1f}%)")
+            log.info(planner_line)
+            summary += "\n       " + planner_line
         print(f"\n[DONE] {summary}\n       Data: {data_path}"
               + ("" if args.no_legacy_copy else f"  (+ legacy copy: {FILE_NAME})"))
     return data

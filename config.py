@@ -47,6 +47,8 @@ GOAL_SNAP_RADIUS = 30.0        # search radius to move a blocked goal to a free 
 GOAL_CLAMP_MARGIN = 2.0        # goals outside the world are clamped this far inside (m)
 PLANNER_TIME_BUDGET_MS = 30    # passed to the planner (JPS currently ignores it)
 PLANNER = "local"              # "local" (planner_grid.py) | "jps" (original, whole grid)
+LOCAL_SEARCH = "jps"           # search inside the local window: "jps" (Jump Point Search, uniform
+                               # step cost: UNKNOWN_COST not applied) | "dijkstra" (UNKNOWN_COST applied)
 LOCAL_PLAN_RADIUS = 100.0      # half size of the planning window around the UAV (m)
 UNKNOWN_POLICY = "blocked"     # "blocked": unseen cells cannot be entered
                                # "optimistic": unseen cells cost UNKNOWN_COST x a free step
@@ -512,6 +514,8 @@ def validate_config():
     if MPC_BACKEND == "rebuild" and (ACCEL_TAU > 0 or D_FRAC != 0):
         add("WARNING", "MPC_BACKEND='rebuild' predicts with the original Euler double integrator "
                        "(no drag, no acceleration lag); the simulator uses dynamics.py.")
+    if LOCAL_SEARCH not in ("jps", "dijkstra"):
+        add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

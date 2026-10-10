@@ -243,6 +243,184 @@ def _dijkstra8(blocked, step_cost, sy, sx):
 
 
 # ============================================================
+# Jump Point Search on a window (numba)
+# ------------------------------------------------------------
+# Same movement model as _dijkstra8: 8-connected, a diagonal move needs both
+# orthogonal neighbours free (no corner cutting). Jump and pruning rules are
+# the ones for that model (PathFinding.js, DiagonalMovement.OnlyWhenNoObstacles):
+# a straight jump stops where a side cell is free but the cell behind it is
+# blocked; a diagonal jump stops where one of its two straight sub-jumps
+# finds a jump point. JPS needs uniform step costs, so UNKNOWN_COST is not
+# applied (unknown cells are free or blocked as UNKNOWN_POLICY says).
+# ============================================================
+@njit(cache=True)
+def _walk(b, y, x):
+    return 0 <= y < b.shape[0] and 0 <= x < b.shape[1] and not b[y, x]
+
+
+@njit(cache=True)
+def _jump_straight(b, y, x, dy, dx, gy, gx):
+    while True:
+        if not _walk(b, y, x):
+            return -1, -1
+        if y == gy and x == gx:
+            return y, x
+        if dx != 0:
+            if ((_walk(b, y - 1, x) and not _walk(b, y - 1, x - dx))
+                    or (_walk(b, y + 1, x) and not _walk(b, y + 1, x - dx))):
+                return y, x
+        else:
+            if ((_walk(b, y, x - 1) and not _walk(b, y - dy, x - 1))
+                    or (_walk(b, y, x + 1) and not _walk(b, y - dy, x + 1))):
+                return y, x
+        y += dy
+        x += dx
+
+
+@njit(cache=True)
+def _jump_diag(b, y, x, dy, dx, gy, gx):
+    while True:
+        if not _walk(b, y, x):
+            return -1, -1
+        if y == gy and x == gx:
+            return y, x
+        if _jump_straight(b, y, x + dx, 0, dx, gy, gx)[0] >= 0:
+            return y, x
+        if _jump_straight(b, y + dy, x, dy, 0, gy, gx)[0] >= 0:
+            return y, x
+        if _walk(b, y, x + dx) and _walk(b, y + dy, x):
+            y += dy
+            x += dx
+        else:
+            return -1, -1
+
+
+@njit(cache=True)
+def _octile(ay, ax, by, bx):
+    dy = abs(ay - by)
+    dx = abs(ax - bx)
+    return max(dy, dx) - min(dy, dx) + np.sqrt(2.0) * min(dy, dx)
+
+
+@njit(cache=True)
+def _jps8(b, sy, sx, gy, gx):
+    """
+    A* over jump points from (sy, sx) to (gy, gx) on the window b (True =
+    blocked). Returns (parent (H, W) flat index of the previous jump point,
+    found). Consecutive jump points are joined by a straight or diagonal line.
+    """
+    H, W = b.shape
+    g = np.full((H, W), np.inf)
+    parent = np.full((H, W), -1, np.int64)
+    closed = np.zeros((H, W), np.bool_)
+    g[sy, sx] = 0.0
+    heap = [(_octile(sy, sx, gy, gx), sy * W + sx)]
+    cy = np.empty(8, np.int64)
+    cx = np.empty(8, np.int64)
+    while len(heap) > 0:
+        f, idx = heapq.heappop(heap)
+        y = idx // W
+        x = idx - y * W
+        if closed[y, x]:
+            continue
+        closed[y, x] = True
+        if y == gy and x == gx:
+            return parent, True
+        # pruned neighbours
+        n = 0
+        p = parent[y, x]
+        if p < 0:
+            for ddy in range(-1, 2):
+                for ddx in range(-1, 2):
+                    if ddy == 0 and ddx == 0:
+                        continue
+                    if not _walk(b, y + ddy, x + ddx):
+                        continue
+                    if ddy != 0 and ddx != 0 and not (_walk(b, y, x + ddx) and _walk(b, y + ddy, x)):
+                        continue
+                    cy[n] = y + ddy
+                    cx[n] = x + ddx
+                    n += 1
+        else:
+            py = p // W
+            px = p - py * W
+            dy = (y > py) - (y < py)
+            dx = (x > px) - (x < px)
+            if dy != 0 and dx != 0:
+                wy = _walk(b, y + dy, x)
+                wx = _walk(b, y, x + dx)
+                if wy:
+                    cy[n] = y + dy; cx[n] = x; n += 1
+                if wx:
+                    cy[n] = y; cx[n] = x + dx; n += 1
+                if wy and wx:
+                    cy[n] = y + dy; cx[n] = x + dx; n += 1
+            elif dx != 0:
+                nxt = _walk(b, y, x + dx)
+                up = _walk(b, y + 1, x)
+                dn = _walk(b, y - 1, x)
+                if nxt:
+                    cy[n] = y; cx[n] = x + dx; n += 1
+                    if up:
+                        cy[n] = y + 1; cx[n] = x + dx; n += 1
+                    if dn:
+                        cy[n] = y - 1; cx[n] = x + dx; n += 1
+                if up:
+                    cy[n] = y + 1; cx[n] = x; n += 1
+                if dn:
+                    cy[n] = y - 1; cx[n] = x; n += 1
+            else:
+                nxt = _walk(b, y + dy, x)
+                rt = _walk(b, y, x + 1)
+                lf = _walk(b, y, x - 1)
+                if nxt:
+                    cy[n] = y + dy; cx[n] = x; n += 1
+                    if rt:
+                        cy[n] = y + dy; cx[n] = x + 1; n += 1
+                    if lf:
+                        cy[n] = y + dy; cx[n] = x - 1; n += 1
+                if rt:
+                    cy[n] = y; cx[n] = x + 1; n += 1
+                if lf:
+                    cy[n] = y; cx[n] = x - 1; n += 1
+        # jump from each neighbour
+        for k in range(n):
+            ddy = cy[k] - y
+            ddx = cx[k] - x
+            if ddy != 0 and ddx != 0:
+                jy, jx = _jump_diag(b, cy[k], cx[k], ddy, ddx, gy, gx)
+            else:
+                jy, jx = _jump_straight(b, cy[k], cx[k], ddy, ddx, gy, gx)
+            if jy < 0 or closed[jy, jx]:
+                continue
+            ng = g[y, x] + _octile(y, x, jy, jx)
+            if ng < g[jy, jx]:
+                g[jy, jx] = ng
+                parent[jy, jx] = idx
+                heapq.heappush(heap, (ng + _octile(jy, jx, gy, gx), jy * W + jx))
+    return parent, False
+
+
+def _jps_cells(parent, W, ty, tx):
+    """Cells (y, x) from the start to (ty, tx), filling in the straight /
+    diagonal runs between consecutive jump points."""
+    jp = []
+    idx = ty * W + tx
+    while idx >= 0:
+        jp.append(divmod(int(idx), W))
+        idx = parent[jp[-1]]
+    jp.reverse()
+    cells = [jp[0]]
+    for (y1, x1) in jp[1:]:
+        y, x = cells[-1]
+        sy, sx = np.sign(y1 - y), np.sign(x1 - x)
+        while (y, x) != (y1, x1):
+            y, x = y + sy, x + sx
+            cells.append((int(y), int(x)))
+    return cells
+
+
+# ============================================================
 # Planner
 # ============================================================
 class LocalGridPlanner:
@@ -252,8 +430,14 @@ class LocalGridPlanner:
     def __init__(self, world_bounds, agent_id=None, grid_resolution=0.5,
                  inflate_radius=0.4, sensing_radius=3.0, local_radius=100.0,
                  unknown_policy="blocked", unknown_cost=1.0,
-                 start_snap_radius=10.0, goal_clamp_margin=2.0, **grid_kwargs):
+                 start_snap_radius=10.0, goal_clamp_margin=2.0, search="dijkstra",
+                 **grid_kwargs):
         grid_kwargs.pop("goal_snap_radius", None)          # not needed (argmin rule)
+        if search not in ("dijkstra", "jps"):
+            raise ValueError(f"search must be 'dijkstra' or 'jps', not {search!r}")
+        self.search = search
+        self.n_jps = 0              # plans answered by JPS
+        self.n_jps_fallback = 0     # JPS found no path to its target -> Dijkstra rule
         self.agent_id = agent_id
         self.local_radius = float(local_radius)
         self.unknown_policy = unknown_policy
@@ -299,6 +483,36 @@ class LocalGridPlanner:
         return np.hypot(gm.ox + (ix + 0.5) * gm.resolution - p[0],
                         gm.oy + (iy + 0.5) * gm.resolution - p[1])
 
+    def _plan_jps(self, blocked, sx, sy, x0, y0):
+        """JPS inside the window, start (sy, sx) in window cells. The target is
+        the goal if it lies in the window, else the window cell closest to it;
+        a blocked target is moved to the nearest free window cell. Returns the
+        smoothed world path, or None if JPS finds no path (the caller then uses
+        the Dijkstra rule, which also handles goals behind obstacles)."""
+        gm = self.gmap
+        H, W = blocked.shape
+        m = self.goal_clamp_margin
+        goal = np.array([np.clip(self.goal[0], gm.ox + m, gm.ox + gm.size_x * gm.resolution - m),
+                         np.clip(self.goal[1], gm.oy + m, gm.oy + gm.size_y * gm.resolution - m)])
+        gx, gy = gm.world_to_grid(goal[0], goal[1])
+        ty = int(np.clip(gy - y0, 0, H - 1))
+        tx = int(np.clip(gx - x0, 0, W - 1))
+        if blocked[ty, tx]:
+            ys, xs = np.nonzero(~blocked)
+            if not len(ys):
+                return None
+            k = int(np.argmin((ys - ty) ** 2 + (xs - tx) ** 2))
+            ty, tx = int(ys[k]), int(xs[k])
+        if (ty, tx) == (sy, sx):
+            w = list(gm.grid_to_world(sx + x0, sy + y0))
+            return [w, list(w)]
+        parent, found = _jps8(blocked, sy, sx, ty, tx)
+        if not found:
+            return None
+        path = [list(gm.grid_to_world(x + x0, y + y0)) for y, x in _jps_cells(parent, W, ty, tx)]
+        smoothed = _string_pull(path, gm)
+        return smoothed if len(smoothed) >= 2 else path
+
     def _cells(self, metres):
         return max(1, int(np.ceil(metres / self.gmap.resolution - 1e-9)))
 
@@ -336,6 +550,12 @@ class LocalGridPlanner:
         x0, x1 = max(0, sx - rc), min(gm.size_x, sx + rc + 1)
         self.last_window = (x0, y0, x1, y1)
         blocked = gm.blocked[y0:y1, x0:x1]
+        if self.search == "jps":
+            path = self._plan_jps(blocked, sx - x0, sy - y0, x0, y0)
+            if path is not None:
+                self.n_jps += 1
+                return True, path, set(), set(), len(path)
+            self.n_jps_fallback += 1
         step = np.ones(blocked.shape)
         if self.unknown_policy != "blocked" and self.unknown_cost != 1.0:
             step[gm.unknown[y0:y1, x0:x1]] = self.unknown_cost
@@ -394,6 +614,7 @@ class LocalGridPlanner:
 
 
 def warmup():
-    """Compile the numba kernel once (otherwise the first replan takes ~1 s)."""
+    """Compile the numba kernels once (otherwise the first replan takes ~1 s)."""
     b = np.zeros((3, 3), np.bool_)
     _dijkstra8(b, np.ones((3, 3)), 1, 1)
+    _jps8(b, 0, 0, 2, 2)

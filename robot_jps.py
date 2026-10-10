@@ -655,7 +655,8 @@ class Robot:
                     sensing_radius=SENSING_RADIUS, local_radius=LOCAL_PLAN_RADIUS,
                     unknown_policy=UNKNOWN_POLICY, unknown_cost=UNKNOWN_COST,
                     start_snap_radius=START_SNAP_RADIUS,
-                    goal_clamp_margin=GOAL_CLAMP_MARGIN, n_ray_bins=GRID_RAY_BINS)
+                    goal_clamp_margin=GOAL_CLAMP_MARGIN, n_ray_bins=GRID_RAY_BINS,
+                    search=LOCAL_SEARCH)
             else:
                 self.planner = JPSPlanner(world_bounds=WORLD_BOUNDS,
                                       agent_id=self.index,
