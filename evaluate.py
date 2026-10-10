@@ -15,7 +15,8 @@ UAV is in TRACK, so the gathering at the start is not counted):
   Tracking   target seen (true target inside some UAV's square FOV), lost
              episodes and the longest one, target offset in the leader's FOV
   Leader     hand-offs, how many fall in a sprint window (target faster than
-             VMAX, + SPRINT_TAIL s), steps with no leader / several leaders
+             1.2 x its nominal speed, + SPRINT_TAIL s), steps with no leader /
+             several leaders
   Formation  FOV union area / n FOVs (1 = no overlap: FOVs side by side),
              steps with a UAV pair closer than CLOSE_PAIR m
   Safety     min UAV-UAV distance, min clearance to obstacles (negative =
@@ -148,8 +149,15 @@ def evaluate(run_dir):
         if not seq or seq[-1][0] != who[t]:
             seq.append((int(who[t]), int(t)))
     changes = [t for (_, t) in seq[1:]]
+    # sprint = a leg clearly faster than the nominal target speed; gaps under
+    # 1 s are filled so that speed noise around the threshold is one sprint
     tspeed = np.r_[0, np.linalg.norm(np.diff(tar, axis=0), axis=1) / dt]
-    sprint = tspeed > vmax
+    v_nom = float(sd.get("tar_max_speed", prm.get("TAR_MAX_SPEED", vmax)))
+    sprint = tspeed > max(1.2 * v_nom, v_nom + 1.0)
+    gap = int(round(1.0 / dt))
+    for s, L in runs_of(~sprint):
+        if 0 < s and s + L < T and L <= gap:
+            sprint[s:s + L] = True
     tail = int(round(SPRINT_TAIL / dt))
     win = np.zeros(T, bool)
     for s, L in runs_of(sprint):

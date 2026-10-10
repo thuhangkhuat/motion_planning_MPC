@@ -41,7 +41,8 @@ def _MPC_CFG():
     import config as _c
     keys = ["HORIZON_LENGTH", "TIMESTEP", "ROBOT_RADIUS", "VMAX", "UMAX", "W_u", "W_gui",
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
-            "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
+            "WORLD_BOUNDS", "W_bounds_slack", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -241,7 +242,7 @@ class Robot:
             self.list_A, self.list_b = [], []
             # zero acceleration keeps the current velocity (the UAV coasts on);
             # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
-            stop = self._brake_control() if FAILSAFE_BRAKE else np.zeros(self.n_control)
+            stop = self._brake_prediction() if FAILSAFE_BRAKE else np.zeros(self.n_control)
             self.updateState(stop, TIMESTEP)
             return
 
@@ -433,12 +434,31 @@ class Robot:
         return np.asarray(lp)[:, :2] + np.asarray(cell, float) * (
             SLOT_SPACING_RATIO * VIEWING_RADIUS * getattr(self, "slot_scale", 1.0))
 
-    def _brake_control(self):
-        """Command that cancels the velocity in one step, scaled down to UMAX."""
-        s = np.concatenate([self.state[:6], self.accel])
+    def _brake_control(self, s=None):
+        """Command that cancels the velocity in one step, scaled down to UMAX.
+        s = [state(6), accel(3)]; default: the current state."""
+        if s is None:
+            s = np.concatenate([self.state[:6], self.accel])
         u = -(self._A[3:6] @ s) / self._B[3, 0]       # v[k+1] = A[3:6] s + B[3,0] u
         n = np.linalg.norm(u)
         return u if n <= UMAX else u * (UMAX / n)
+
+    def _brake_prediction(self):
+        """Publish the braking trajectory as this UAV's prediction. The other
+        UAVs plan around states_prediction; while braking it used to hold the
+        last MPC plan (shifted), which this UAV no longer follows, and a
+        neighbour planning 1 m from that stale plan flew into it."""
+        s = np.concatenate([self.state[:6], self.accel])
+        X = np.zeros((HORIZON_LENGTH + 1, self.n_state))
+        Uc = np.zeros((HORIZON_LENGTH, self.n_control))
+        X[0] = s[:6]
+        for k in range(HORIZON_LENGTH):
+            Uc[k] = self._brake_control(s)
+            s = self._A @ s + self._B @ Uc[k]
+            X[k + 1] = s[:6]
+        self.states_prediction, self.controls_prediction = X, Uc
+        self._mpc_X = self._mpc_U = None              # the stale plan is no warm start either
+        return Uc[0]
 
     def _fallback_control(self):
         """
@@ -450,7 +470,8 @@ class Robot:
         """
         self.mpc_fail_streak = getattr(self, "mpc_fail_streak", 0) + 1
         if FAILSAFE_BRAKE and self.mpc_fail_streak > MPC_FAILS_BEFORE_BRAKE:
-            return self._brake_control()
+            return self._brake_prediction()
+        # the shifted plan is what this UAV executes, so it stays the prediction
         return self.controls_prediction[0, :]
 
     def _control_parametric(self, robots, neighbor_robots, target_pos):

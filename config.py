@@ -168,9 +168,15 @@ W_leader_slack = 1e3           # penalty on the CBF visibility slack
 # ─── Dynamic anchor-based slots ───
 ANCHOR_HYSTERESIS_RAD = 0.3    # ~17 deg: anchor changes only above this difference
 
-# ─── Collision avoidance (soft, all modes) ───
-W_collision_avoid = 5.0
-COLLISION_AVOID_RATIO = 3.0    # COLLISION_AVOID_DISTANCE = ratio * ROBOT_RADIUS (derived)
+# ─── Collision avoidance between UAVs ───
+# ROBOT_RADIUS is the margin to obstacles; between two UAVs that both move at
+# up to VMAX a margin of 2R (1 m on the field maps) leaves nothing for model
+# or prediction errors, so the UAV-UAV distance has its own, larger minimum.
+UAV_SAFE_RATIO = 0.12          # UAV_SAFE_DISTANCE = max(2R, ratio * VIEWING_RADIUS) (derived)
+W_uav_slack = 1e4              # penalty on violating UAV_SAFE_DISTANCE (soft-hard: keeps the MPC feasible)
+W_collision_avoid = 5.0        # soft repulsion below COLLISION_AVOID_DISTANCE
+COLLISION_AVOID_RATIO = 3.0    # COLLISION_AVOID_DISTANCE = max(ratio * R, 2.5 * UAV_SAFE_DISTANCE) (derived)
+W_bounds_slack = 1e4           # penalty on leaving WORLD_BOUNDS (soft-hard, like W_uav_slack)
 
 # ─── Mode switch hysteresis (counter based) ───
 K_IN_THRESHOLD = 3             # consecutive cycles seeing the target -> TRACK
@@ -332,7 +338,9 @@ def _derive(name, value):
 
 
 _derive("INFLATE_RADIUS", ROBOT_RADIUS + INFLATE_MARGIN)
-_derive("COLLISION_AVOID_DISTANCE", COLLISION_AVOID_RATIO * ROBOT_RADIUS)
+_derive("UAV_SAFE_DISTANCE", max(2 * ROBOT_RADIUS, UAV_SAFE_RATIO * VIEWING_RADIUS))
+_derive("COLLISION_AVOID_DISTANCE", max(COLLISION_AVOID_RATIO * ROBOT_RADIUS,
+                                        2.5 * UAV_SAFE_DISTANCE))
 _derive("DESIRED_SEPARATION", DESIRED_SEPARATION_RATIO * VIEWING_RADIUS)
 _derive("FORMATION_GAP", FORMATION_GAP_RATIO * VIEWING_RADIUS)
 _derive("TRACK_EXIT_HYSTERESIS", TRACK_EXIT_HYSTERESIS_RATIO * VIEWING_RADIUS)
@@ -408,13 +416,14 @@ def validate_config():
     if SENSING_RADIUS < reach:
         add("WARNING", f"SENSING_RADIUS={SENSING_RADIUS:.2f} m < horizon reach {reach:.2f} m: "
                        f"the MPC plans into space the LiDAR has not seen.")
-    need = 2 * reach + 2 * ROBOT_RADIUS
+    need = 2 * reach + UAV_SAFE_DISTANCE
     if SENSING_NEIGHBOR < need:
-        add("WARNING", f"SENSING_NEIGHBOR={SENSING_NEIGHBOR:.2f} m < 2*reach + 2R = {need:.2f} m: "
+        add("WARNING", f"SENSING_NEIGHBOR={SENSING_NEIGHBOR:.2f} m < 2*reach + UAV_SAFE_DISTANCE = {need:.2f} m: "
                        f"two UAVs can close in before becoming each other's hard constraint.")
-    if 2 * VMAX * TIMESTEP > 2 * ROBOT_RADIUS + 1e-9:
-        add("WARNING", f"2*VMAX*dt={2 * VMAX * TIMESTEP:.2f} m > 2R={2 * ROBOT_RADIUS:.2f} m: "
-                       f"UAVs can pass through each other between two MPC samples.")
+    if 2 * VMAX * TIMESTEP > UAV_SAFE_DISTANCE + 1e-9:
+        add("WARNING", f"2*VMAX*dt={2 * VMAX * TIMESTEP:.2f} m > UAV_SAFE_DISTANCE="
+                       f"{UAV_SAFE_DISTANCE:.2f} m: UAVs can pass through each other between "
+                       f"two MPC samples.")
     if VMAX / UMAX > HORIZON_LENGTH * TIMESTEP:
         add("WARNING", f"VMAX/UMAX={VMAX / UMAX:.2f} s is longer than the horizon "
                        f"{HORIZON_LENGTH * TIMESTEP:.2f} s: the UAV cannot reach top speed within it.")

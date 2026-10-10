@@ -9,6 +9,8 @@ that any mode can use; what changes from step to step is passed as parameters:
   * corridor polytope      -> A, b padded to a fixed number of faces
                               (padding rows: A = 0, b = BIG, i.e. inactive)
   * neighbour constraints  -> one slot per other UAV + a 0/1 "active" flag
+                              (|p - p_j| >= UAV_SAFE_DISTANCE, slack with a large penalty)
+  * map bounds             -> WORLD_BOUNDS shrunk by R, slack with a large penalty
   * leader CBF             -> always present, relaxed by BIG when not leader
   * mode-dependent costs   -> weights set to 0 when the term is not used
   * tracking cost branch   -> 0/1 switch between "guide" and "standoff" forms
@@ -59,6 +61,8 @@ class MPCProblem:
         X = opti.variable(H + 1, 6)                   # [px, py, vx, vy, ax, ay]
         U = opti.variable(H, 2)                       # commanded acceleration
         S = opti.variable(H, 4)                       # leader CBF slack (m)
+        Sc = opti.variable(H, max(n_others, 1))       # UAV-UAV distance slack (m²)
+        Sb = opti.variable(H, 1)                      # map-bounds slack (m)
 
         p = {}
         p["x0"] = opti.parameter(1, 6)
@@ -89,11 +93,26 @@ class MPCProblem:
         for i in range(H + 1):
             opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R)
 
-        # ── neighbours (hard), active only if flagged ──
+        # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
+        # Soft-hard: a slack with a large penalty keeps the problem feasible when
+        # another UAV is already too close (an infeasible MPC falls back to
+        # braking, which made the near-misses worse).
+        Dsafe = cfg["UAV_SAFE_DISTANCE"]
         for i in range(H):
             for j in range(n_others):
-                d2 = ca.sumsqr(X[i, :2] - p["others"][j][i, :])
-                opti.subject_to(d2 >= (2 * R) ** 2 * p["nb_flag"][j])
+                d2 = ca.sumsqr(X[i + 1, :2] - p["others"][j][i + 1, :])
+                opti.subject_to(d2 >= Dsafe ** 2 * p["nb_flag"][j] - Sc[i, j])
+        opti.subject_to(ca.vec(Sc) >= 0)
+
+        # ── map bounds (soft-hard, as above) ──
+        bx0, by0, bx1, by1 = cfg["WORLD_BOUNDS"]
+        for i in range(H):
+            px, py = X[i + 1, 0], X[i + 1, 1]
+            opti.subject_to(px >= bx0 + R - Sb[i])
+            opti.subject_to(px <= bx1 - R + Sb[i])
+            opti.subject_to(py >= by0 + R - Sb[i])
+            opti.subject_to(py <= by1 - R + Sb[i])
+        opti.subject_to(Sb >= 0)
 
         # ── leader visibility CBF (relaxed by BIG when not leader) ──
         Lcbf = cfg["CBF_BOX_RATIO"] * cfg["VIEWING_RADIUS"]
@@ -146,6 +165,11 @@ class MPCProblem:
             cost += p["w_slot"] * ca.sumsqr(X[k, :2] - p["slot"][k, :]) / Ls ** 2
         # leader CBF slack
         cost += cfg["W_leader_slack"] * ca.sum1(ca.sum2((S / Ls) ** 3))
+        # UAV-UAV and map-bounds slacks: linear (exact penalty) + quadratic
+        sc = Sc / Ls ** 2
+        cost += cfg["W_uav_slack"] * (ca.sum1(ca.sum2(sc)) + ca.sumsqr(sc))
+        sb = Sb / Ls
+        cost += cfg["W_bounds_slack"] * (ca.sum1(sb) + ca.sumsqr(sb))
 
         opti.minimize(cost)
         solver = cfg.get("MPC_SOLVER", "ipopt")
@@ -153,6 +177,7 @@ class MPCProblem:
         opts.setdefault("expand", True)      # SX graph: much cheaper function evaluations
         opti.solver("sqpmethod" if solver == "sqp" else "ipopt", opts)
         self.opti, self.X, self.U, self.S, self.p = opti, X, U, S, p
+        self.Sc, self.Sb = Sc, Sb
         self.solve_times = []                # wall time of every solve() call, fallback included (s)
         self.n_fail = 0
         self.n_fallback = 0                  # SQP failures re-solved with IPOPT
@@ -214,6 +239,8 @@ class MPCProblem:
         o.set_initial(self.X, X_init)
         o.set_initial(self.U, U_init)
         o.set_initial(self.S, 0)
+        o.set_initial(self.Sc, 0)
+        o.set_initial(self.Sb, 0)
         try:
             sol = o.solve()
             return True, sol.value(self.X), sol.value(self.U)
