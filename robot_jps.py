@@ -492,68 +492,56 @@ class Robot:
     # ============================================================
     # Corridor polytope selection
     # ============================================================
-    def _obstacle_faces(self, A, b):
-        """1 for the faces that lie on a LiDAR point (obstacle faces), 0 for
-        the faces of pydecomp's bounding box (see CORRIDOR_BRAKE)."""
-        pts = getattr(self, "_scan_points", None)
-        A = np.asarray(A, float).reshape(-1, 2)
-        b = np.asarray(b, float).reshape(-1)
-        if pts is None or not len(pts):
-            return np.zeros(len(b))
-        d = np.abs(b[:, None] - A @ pts.T).min(axis=1)
-        return (d <= CORRIDOR_FACE_TOL).astype(float)
+    def _backup_tail(self):
+        """Positions of the verified backup branch from the current state on
+        (Xb[i] is the current state after i fallback steps since the solve that
+        produced it), or None without one."""
+        if not CONTINGENCY or getattr(self, "_backup", None) is None:
+            return None
+        Xb = self._backup[0]
+        return Xb[min(self._bk_i + 1, len(Xb) - 1):, :2]
 
-    def _can_stop_in(self, A, b, mask):
-        """True if, braking now at CORRIDOR_BRAKE_ACCEL_RATIO * UMAX, the UAV
-        stops before every obstacle face (mask, R margin included) of A, b."""
+    @staticmethod
+    def _contains(A, b, P, margin):
         A = np.asarray(A, float).reshape(-1, 2)
         b = np.asarray(b, float).reshape(-1)
-        mask = np.asarray(mask) > 0
-        vn = np.maximum(A @ self.state[3:5], 0.0)
-        need = vn * (ACCEL_TAU + TIMESTEP) + vn ** 2 / (2 * CORRIDOR_BRAKE_ACCEL_RATIO * UMAX)
-        room = b - CORRIDOR_MARGIN - A @ self.state[:2]
-        return bool(np.all(need[mask] <= room[mask] + 1e-6))
+        return bool(np.all(np.asarray(P, float).reshape(-1, 2) @ A.T <= b - margin + 1e-6))
 
     def _select_polytope(self):
         """
-        Hard corridor polytope for this step:
-          1. a new polytope that contains the UAV and in which it can still stop;
-          2. else the previous one, if it still contains the UAV, it can stop in
-             it and no current LiDAR point lies inside it (obstacles are static,
-             but a point seen now that falls inside means it is not free);
-          3. else a polytope containing the UAV, new first, then the previous
-             one (it may be unable to stop: the MPC may fail and brake);
-          4. else the polytope the UAV is least outside of (the hard corridor
-             is never dropped; the MPC's recovery rule brings it back inside).
-        Switching to a new polytope in which the UAV can no longer stop made the
-        MPC infeasible for ~1 s while it slid into an obstacle's margin (scen2).
-        Returns (A, b, obstacle-face mask); a kept polytope keeps the mask from
-        the scan it was built from (new LiDAR points rarely lie on old faces).
+        Hard corridor polytope for this step. Invariant: the selected polytope
+        contains the rest of the last verified backup branch (with the corridor
+        margin), so that branch, shifted by one step and padded at rest, is a
+        feasible solution of this step's MPC (nominal = backup): recursive
+        feasibility. With a backup:
+          1. the first new polytope that contains its rest (fresher scan);
+          2. else the previous polytope, which contains it by construction
+             (the backup was verified in it, or step 1 checked it). Obstacles
+             are static and it was free when built, so it stays valid.
+        Without a backup (start-up, CONTINGENCY off): a new polytope containing
+        the UAV, else the previous one, else the one it is least outside of
+        (start-up only; the MPC's recovery rule brings it inside).
+        Safety does not rest on this: a failed solve flies the last verified
+        backup, which never leaves the polytope it was verified in.
         """
         p = self.state[:2]
-        polys = [(A, b, self._obstacle_faces(A, b)) for A, b in zip(self.list_A, self.list_b)]
-        inside = [q for q in polys if np.all(q[0] @ p - np.ravel(q[1]) <= 1e-5)]
-        if not CORRIDOR_BRAKE:
-            if inside:
-                return inside[0]
-        else:
-            for q in inside:
-                if self._can_stop_in(*q):
-                    return q
-            prev = getattr(self, "_active_poly", None)
-            prev_ok = False
+        polys = list(zip(self.list_A, self.list_b))
+        prev = getattr(self, "_active_poly", None)
+        tail = self._backup_tail()
+        if tail is not None:
+            for A, b in polys:
+                if self._contains(A, b, tail, CORRIDOR_MARGIN):
+                    return A, b
             if prev is not None:
-                A, b = np.asarray(prev[0], float), np.ravel(prev[1]).astype(float)
-                pts = getattr(self, "_scan_points", np.zeros((0, 2)))
-                pts_inside = len(pts) and np.any(np.all(pts @ A.T < b - 1e-6, axis=1))
-                prev_ok = bool(np.all(A @ p - b <= 1e-5)) and not pts_inside
-                if prev_ok and self._can_stop_in(A, b, prev[2]):
-                    return prev
-            if inside:
-                return inside[0]
-            if prev_ok:                     # contains the UAV, even if it cannot stop in it
                 return prev
-        k = int(np.argmin([np.max(q[0] @ p - np.ravel(q[1])) for q in polys]))
+        for A, b in polys:
+            if self._contains(A, b, p, 0.0):
+                return A, b
+        if prev is not None and self._contains(prev[0], prev[1], p, 0.0):
+            return prev
+        if not polys:
+            return prev                    # None only if no corridor ever existed
+        k = int(np.argmin([np.max(np.asarray(A) @ p - np.ravel(b)) for A, b in polys]))
         return polys[k]
 
     def _fallback_control(self):
@@ -610,13 +598,15 @@ class Robot:
 
     def _control_parametric(self, robots, neighbor_robots, target_pos):
         active_A = active_b = None
-        brake_mask = None
-        if self.list_A:
-            active_A, active_b, brake_mask = self._select_polytope()
-            self._active_poly = (active_A, active_b, brake_mask)
+        # also with an empty list (pydecomp failed or gave non-finite faces): the
+        # previous polytope, which holds the rest of the backup, is then kept
+        # instead of dropping the hard corridor (no obstacle in range is not this
+        # case: generateSafeCorridor returns the free square then)
+        sel = self._select_polytope()
+        if sel is not None:
+            active_A, active_b = sel
+            self._active_poly = (active_A, active_b)
             self.corridors.append({'A': active_A, 'b': active_b})
-        else:
-            self._active_poly = None             # no obstacle in range: nothing to keep
 
         is_leader = self.is_leader_role          # updated in computeControlSignal
         others = [r for r in robots if r.index != self.index]
@@ -1473,7 +1463,14 @@ class Robot:
     def generateSafeCorridor(self, path_ref, obstacle_points):
         """Create convex polygon using pydecomp"""
         if obstacle_points.shape[0] < 1:
-            return [], []
+            # no LiDAR return within SENSING_RADIUS: the disk around the UAV is
+            # seen free; use the square inscribed in it, so the backup branch is
+            # still verified in a polytope (and the selection invariant holds)
+            L = SENSING_RADIUS / np.sqrt(2.0)
+            px, py = self.state[0], self.state[1]
+            A = np.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
+            b = np.array([[px + L], [-(px - L)], [py + L], [-(py - L)]])
+            return [A], [b]
         box = np.array([[CORRIDOR_BOX, CORRIDOR_BOX]])
         seg = self._corridor_seed(path_ref)
         if len(seg) < 2 or np.linalg.norm(seg[1] - seg[0]) < 1e-6:

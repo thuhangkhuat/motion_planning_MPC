@@ -201,11 +201,6 @@ TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison 
 CONTINGENCY = True
 BACKUP_HORIZON = 25
 W_backup = 0.1                 # effort weight of the backup branch, relative to W_u
-# Corridor selection: the corridor is not switched to a polytope in which the UAV
-# could no longer stop, braking at ratio * UMAX (robot_jps.py, _select_polytope).
-CORRIDOR_BRAKE = True
-CORRIDOR_BRAKE_ACCEL_RATIO = 0.8
-CORRIDOR_FACE_TOL = 0.05       # m: a corridor face is an obstacle face if a LiDAR point lies on it
 
 # ─── Mode switch hysteresis (counter based) ───
 K_IN_THRESHOLD = 3             # consecutive cycles seeing the target -> TRACK
