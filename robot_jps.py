@@ -43,7 +43,7 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "TERMINAL_STOP", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -243,7 +243,9 @@ class Robot:
             self.list_A, self.list_b = [], []
             # zero acceleration keeps the current velocity (the UAV coasts on);
             # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
-            if TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
+            if CONTINGENCY and getattr(self, "_backup", None) is not None:
+                stop = self._backup_control()          # backup branch stops in its corridor
+            elif TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
                 stop = self._plan_tail_control()       # last plan ends at rest in its corridor
             else:
                 stop = self._brake_prediction() if FAILSAFE_BRAKE else np.zeros(self.n_control)
@@ -541,12 +543,34 @@ class Robot:
         drove UAVs into obstacles in the original code.
         """
         self.mpc_fail_streak = getattr(self, "mpc_fail_streak", 0) + 1
+        if CONTINGENCY and getattr(self, "_backup", None) is not None:
+            return self._backup_control()
         if TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
             return self._plan_tail_control()
         if FAILSAFE_BRAKE and self.mpc_fail_streak > MPC_FAILS_BEFORE_BRAKE:
             return self._brake_prediction()
         # the shifted plan is what this UAV executes, so it stays the prediction
         return self.controls_prediction[0, :]
+
+    def _backup_control(self):
+        """
+        CONTINGENCY fallback: the next control of the backup branch of the last
+        successful solve, then zero once it has stopped. The branch started
+        with the control that was applied, so the UAV is on it now; it stays in
+        that solve's corridor and ends at rest. states_prediction is set to the
+        rest of the branch so the other UAVs plan around where it really goes.
+        """
+        Xb, Ub = self._backup
+        self._bk_i += 1
+        i = self._bk_i                           # Xb[i] is the current state
+        u = Ub[i] if i < len(Ub) else np.zeros(2)
+        H = HORIZON_LENGTH
+        rows = Xb[min(i, len(Xb) - 1):]
+        rows = np.vstack([rows, np.repeat(rows[-1:], max(0, H + 1 - len(rows)), axis=0)])[:H + 1]
+        self.states_prediction = np.column_stack(
+            [rows[:, :2], np.full(H + 1, self.state[2]), rows[:, 2:4], np.zeros(H + 1)])
+        self.controls_prediction = np.zeros((H, self.n_control))
+        return np.array([u[0], u[1], 0.0])
 
     def _plan_tail_control(self):
         """
@@ -630,6 +654,8 @@ class Robot:
             control = self.controls_prediction[0, :]
             self.mpc_fail_streak = 0
             self._plan_left = H - 1        # controls U[1..H-1] left for the fallback
+            self._backup = self.mpc.last_backup if CONTINGENCY else None
+            self._bk_i = 0
         else:
             log.warning("[Robot %d] MPC solve failed at t=%.2f", self.index, self.time_stamp)
             control = self._fallback_control()
@@ -1387,12 +1413,38 @@ class Robot:
                 neighbors.append(other_robot)
         return neighbors
 
+    def _corridor_seed(self, path_ref):
+        """
+        Seed segment for pydecomp: from the UAV's position to the next path
+        vertex ahead of it. The path is committed and reused for several steps,
+        so its first segment often lies behind the UAV (5 m median, up to
+        ~20 m); a polytope grown around it then sometimes did not contain the
+        UAV, and the corridor recovery let the plan cut an obstacle corner
+        outside it (scen3). "Ahead" = end of the segment the UAV projects onto,
+        not the nearest vertex, so the seed does not skip a corner.
+        """
+        P = np.asarray(path_ref, dtype=float)[:, :2]
+        pos = np.asarray(self.state[:2], float)
+        if len(P) < 2:
+            return P[:2]
+        best, k = np.inf, 0
+        for i in range(len(P) - 1):
+            a, ab = P[i], P[i + 1] - P[i]
+            t = np.clip(np.dot(pos - a, ab) / max(np.dot(ab, ab), 1e-12), 0.0, 1.0)
+            d = np.linalg.norm(a + t * ab - pos)
+            if d < best:
+                best, k = d, i
+        nxt = P[k + 1]
+        if np.linalg.norm(nxt - pos) < 1e-6 and k + 2 < len(P):
+            nxt = P[k + 2]
+        return np.vstack([pos, nxt])
+
     def generateSafeCorridor(self, path_ref, obstacle_points):
         """Create convex polygon using pydecomp"""
         if obstacle_points.shape[0] < 1:
             return [], []
         box = np.array([[CORRIDOR_BOX, CORRIDOR_BOX]])
-        seg = np.array(path_ref[0:2], dtype=float)
+        seg = self._corridor_seed(path_ref)
         if len(seg) < 2 or np.linalg.norm(seg[1] - seg[0]) < 1e-6:
             # UAV already at its goal (e.g. a satellite on its slot): a zero-length
             # segment makes pydecomp divide by zero -> NaN faces. Use a short segment.

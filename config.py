@@ -193,7 +193,14 @@ CORRIDOR_RECOVER_HOLD = 0.3    # s
 # Every MPC plan ends at rest inside the corridor (mpc_problem.py); when a solve
 # fails the UAV flies the rest of its last plan and stops (robot_jps.py). Needs
 # UMAX * (HORIZON_LENGTH*dt - ACCEL_TAU - dt) > VMAX, else the speed is capped.
-TERMINAL_STOP = True
+TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison runs)
+# Contingency MPC: a backup branch shares the first control with the plan and
+# stops inside the corridor within BACKUP_HORIZON steps (mpc_problem.py); the
+# fallback flies it. BACKUP_HORIZON * dt must allow a stop from VMAX:
+# UMAX * (BACKUP_HORIZON*dt - ACCEL_TAU - dt) >= VMAX.
+CONTINGENCY = True
+BACKUP_HORIZON = 25
+W_backup = 0.1                 # effort weight of the backup branch, relative to W_u
 # Corridor selection: the corridor is not switched to a polytope in which the UAV
 # could no longer stop, braking at ratio * UMAX (robot_jps.py, _select_polytope).
 CORRIDOR_BRAKE = True
@@ -448,6 +455,10 @@ def validate_config():
         add("WARNING", f"2*VMAX*dt={2 * VMAX * TIMESTEP:.2f} m > UAV_SAFE_DISTANCE="
                        f"{UAV_SAFE_DISTANCE:.2f} m: UAVs can pass through each other between "
                        f"two MPC samples.")
+    if CONTINGENCY and UMAX * (BACKUP_HORIZON * TIMESTEP - ACCEL_TAU - TIMESTEP) < VMAX:
+        add("WARNING", f"CONTINGENCY: the backup branch must stop within {BACKUP_HORIZON * TIMESTEP:.1f} s, "
+                       f"so the UAV can only keep ~{UMAX * (BACKUP_HORIZON * TIMESTEP - ACCEL_TAU - TIMESTEP):.1f} m/s "
+                       f"< VMAX={VMAX}. Raise BACKUP_HORIZON.")
     if TERMINAL_STOP and UMAX * (HORIZON_LENGTH * TIMESTEP - ACCEL_TAU - TIMESTEP) < VMAX:
         add("WARNING", f"TERMINAL_STOP: a plan must stop within {HORIZON_LENGTH * TIMESTEP:.1f} s, "
                        f"so the UAV can only keep ~{UMAX * (HORIZON_LENGTH * TIMESTEP - ACCEL_TAU - TIMESTEP):.1f} m/s "

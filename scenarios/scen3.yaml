@@ -149,18 +149,18 @@ params:
   CBF_BOX_RATIO: 0.5       # target within +-12.5 m of the leader's FOV centre (FOV +-25 m)
   # ─── Dynamics / MPC ─── (same as scen1)
   TIMESTEP: 0.1
-  HORIZON_LENGTH: 25        # reach = VMAX * H * dt = 25 m; TERMINAL_STOP: stop within 2.5 s (~11 m/s > VMAX)
+  HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m (the backup branch, BACKUP_HORIZON = 25, stops the UAV)
   VMAX: 10
-  UMAX: 5                   # VMAX / UMAX = 2 s < horizon length
+  UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
   ROBOT_RADIUS: 0.5         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
-  CORRIDOR_BOX: 30          # >= horizon reach
+  CORRIDOR_BOX: 25          # >= horizon reach
   CORRIDOR_BARRIER_EPS: 1.0
   COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost
   W_sat_slot: 10            # distances are scaled down, control effort is not: at 1 the slot pull
                             # loses to W_u and satellites trail their slot by ~15 m
   # ─── Sensing ───
   SENSING_RADIUS: 50
-  SENSING_NEIGHBOR: 55      # >= 2 * reach + UAV_SAFE_DISTANCE
+  SENSING_NEIGHBOR: 45      # >= 2 * reach + UAV_SAFE_DISTANCE
   LIDAR_RANGE_MIN: 0.5
   LIDAR_NOISE: 0.05
   LIDAR_MARCH_STEP: 0.5
