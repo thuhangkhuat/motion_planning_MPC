@@ -190,9 +190,12 @@ W_bounds_slack = 1e4           # penalty on leaving WORLD_BOUNDS (soft-hard, lik
 # feasible; see mpc_problem.py)
 CORRIDOR_RECOVER_ACCEL_RATIO = 0.5
 CORRIDOR_RECOVER_HOLD = 0.3    # s
-# Braking room: at the end of the MPC horizon the UAV must be able to stop before
-# every obstacle face of its corridor, braking at ratio * UMAX (see mpc_problem.py);
-# the corridor is not switched to a polytope in which it could no longer stop.
+# Every MPC plan ends at rest inside the corridor (mpc_problem.py); when a solve
+# fails the UAV flies the rest of its last plan and stops (robot_jps.py). Needs
+# UMAX * (HORIZON_LENGTH*dt - ACCEL_TAU - dt) > VMAX, else the speed is capped.
+TERMINAL_STOP = True
+# Corridor selection: the corridor is not switched to a polytope in which the UAV
+# could no longer stop, braking at ratio * UMAX (robot_jps.py, _select_polytope).
 CORRIDOR_BRAKE = True
 CORRIDOR_BRAKE_ACCEL_RATIO = 0.8
 CORRIDOR_FACE_TOL = 0.05       # m: a corridor face is an obstacle face if a LiDAR point lies on it
@@ -445,6 +448,10 @@ def validate_config():
         add("WARNING", f"2*VMAX*dt={2 * VMAX * TIMESTEP:.2f} m > UAV_SAFE_DISTANCE="
                        f"{UAV_SAFE_DISTANCE:.2f} m: UAVs can pass through each other between "
                        f"two MPC samples.")
+    if TERMINAL_STOP and UMAX * (HORIZON_LENGTH * TIMESTEP - ACCEL_TAU - TIMESTEP) < VMAX:
+        add("WARNING", f"TERMINAL_STOP: a plan must stop within {HORIZON_LENGTH * TIMESTEP:.1f} s, "
+                       f"so the UAV can only keep ~{UMAX * (HORIZON_LENGTH * TIMESTEP - ACCEL_TAU - TIMESTEP):.1f} m/s "
+                       f"< VMAX={VMAX}. Raise HORIZON_LENGTH.")
     if VMAX / UMAX > HORIZON_LENGTH * TIMESTEP:
         add("WARNING", f"VMAX/UMAX={VMAX / UMAX:.2f} s is longer than the horizon "
                        f"{HORIZON_LENGTH * TIMESTEP:.2f} s: the UAV cannot reach top speed within it.")

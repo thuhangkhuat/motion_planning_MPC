@@ -69,7 +69,6 @@ class MPCProblem:
         p["A_hard"] = opti.parameter(n_faces, 2)
         p["b_hard"] = opti.parameter(n_faces, 1)
         p["corr_relax"] = opti.parameter(n_faces, 1)  # current intrusion into the R margin, per face
-        p["brake_mask"] = opti.parameter(n_faces, 1)  # 1 = face lies on an obstacle (braking constraint)
         p["A_cost"] = opti.parameter(n_faces, 2)
         p["b_cost"] = opti.parameter(n_faces, 1)
         p["w_corr"] = opti.parameter()
@@ -110,25 +109,18 @@ class MPCProblem:
             allow = ca.fmax(0, p["corr_relax"] - s_i)
             opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R + allow)
 
-        # ── braking room at the end of the horizon (obstacle faces only) ──
-        # The corridor alone lets the plan end next to a face while still flying
-        # at it; one step later, or after the corridor is rebuilt, no plan can
-        # stop in time and the MPC fails. At step H the UAV must be able to stop
-        # before every obstacle face: v_n * t_lag + v_n^2 / (2 a_b) <= distance,
-        # v_n = speed towards the face, a_b = CORRIDOR_BRAKE_ACCEL_RATIO * UMAX,
-        # t_lag = ACCEL_TAU + dt. Faces of pydecomp's bounding box carry no
-        # obstacle and are left out, otherwise the UAV would slow down in open space.
-        if cfg["CORRIDOR_BRAKE"]:
-            a_b = cfg["CORRIDOR_BRAKE_ACCEL_RATIO"] * cfg["UMAX"]
-            t_lag = cfg["ACCEL_TAU"] + dt
-            # smooth max(v_n, 0) (>= it, so conservative): fmax has a kink at
-            # v_n = 0, which is exactly where the plan ends when it stops, and
-            # IPOPT then ran out of iterations on feasible problems
-            v_raw = ca.mtimes(p["A_hard"], X[H, 2:4].T)
-            vn = 0.5 * (v_raw + ca.sqrt(v_raw ** 2 + 0.1 ** 2))
-            s_H = 0.5 * a_rec * max(0.0, H * dt - t_hold) ** 2
-            room = p["b_hard"] - R + ca.fmax(0, p["corr_relax"] - s_H) - ca.mtimes(p["A_hard"], X[H, :2].T)
-            opti.subject_to(p["brake_mask"] * (vn * t_lag + vn ** 2 / (2 * a_b)) <= room)
+        # ── terminal set: every plan ends at rest (TERMINAL_STOP) ──
+        # With the corridor hard on steps 1..H and v = a = 0 at step H, the rest
+        # of a successful plan (shifted by one step, then hovering) satisfies the
+        # same constraints at the next step. When a later solve fails the UAV
+        # keeps flying that rest of the plan (robot_jps.py) and stops inside a
+        # corridor that was obstacle-free when it was built: static obstacles are
+        # never hit, instead of braking blindly along the current velocity.
+        # Cost: the UAV must be able to stop within H*dt, so its sustainable
+        # speed is ~UMAX * (H*dt - ACCEL_TAU - dt); HORIZON_LENGTH is chosen so
+        # that this exceeds VMAX.
+        if cfg["TERMINAL_STOP"]:
+            opti.subject_to(X[H, 2:6] == 0)
 
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
         # Soft-hard: a slack with a large penalty keeps the problem feasible when
@@ -251,7 +243,7 @@ class MPCProblem:
 
     def _solve(self, x0, A_hard, b_hard, A_cost, b_cost, use_corr_cost, others, nb_flags,
                tgt, w_search, slot, w_slot, leader, ref, trk_goal, s_ref,
-               X_init, U_init, w_tra=None, brake_mask=None):
+               X_init, U_init, w_tra=None):
         o, p, cfg = self.opti, self.p, self.cfg
         o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))   # [px, py, vx, vy, ax, ay]
         Ah, bh = self._pad(A_hard, b_hard)
@@ -260,11 +252,6 @@ class MPCProblem:
         o.set_value(p["b_hard"], bh)
         x_now = np.asarray(x0, float).reshape(-1)[:2]
         o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["ROBOT_RADIUS"])))
-        mask = np.zeros((self.n_faces, 1))
-        if brake_mask is not None:
-            mk = np.asarray(brake_mask, float).reshape(-1)
-            mask[:len(mk), 0] = mk
-        o.set_value(p["brake_mask"], mask)
         o.set_value(p["A_cost"], Ac)
         o.set_value(p["b_cost"], bc)
         o.set_value(p["w_corr"], cfg["W_corridor"] if use_corr_cost else 0.0)

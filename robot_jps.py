@@ -43,7 +43,7 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "CORRIDOR_BRAKE", "CORRIDOR_BRAKE_ACCEL_RATIO", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "TERMINAL_STOP", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -243,7 +243,10 @@ class Robot:
             self.list_A, self.list_b = [], []
             # zero acceleration keeps the current velocity (the UAV coasts on);
             # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
-            stop = self._brake_prediction() if FAILSAFE_BRAKE else np.zeros(self.n_control)
+            if TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
+                stop = self._plan_tail_control()       # last plan ends at rest in its corridor
+            else:
+                stop = self._brake_prediction() if FAILSAFE_BRAKE else np.zeros(self.n_control)
             self.updateState(stop, TIMESTEP)
             return
 
@@ -538,10 +541,26 @@ class Robot:
         drove UAVs into obstacles in the original code.
         """
         self.mpc_fail_streak = getattr(self, "mpc_fail_streak", 0) + 1
+        if TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
+            return self._plan_tail_control()
         if FAILSAFE_BRAKE and self.mpc_fail_streak > MPC_FAILS_BEFORE_BRAKE:
             return self._brake_prediction()
         # the shifted plan is what this UAV executes, so it stays the prediction
         return self.controls_prediction[0, :]
+
+    def _plan_tail_control(self):
+        """
+        TERMINAL_STOP fallback: the next control of the last successful MPC plan
+        (already shifted by updateState), then zero once the plan is used up.
+        That plan stays inside its corridor and ends at rest (v = a = 0), so the
+        UAV stops without leaving a corridor that was obstacle-free when it was
+        built; states_prediction is that same plan (its last row, the rest
+        state, is repeated by the shift), so other UAVs see where it goes.
+        """
+        if self._plan_left > 0:
+            self._plan_left -= 1
+            return self.controls_prediction[0, :].copy()
+        return np.zeros(self.n_control)            # at rest: hover
 
     def _control_parametric(self, robots, neighbor_robots, target_pos):
         active_A = active_b = None
@@ -599,7 +618,7 @@ class Robot:
             nb_flags=[1.0 if r.index in nb_idx else 0.0 for r in others],
             tgt=self._target_trajectory(target_pos[0, :2]), w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
-            w_tra=w_tra, brake_mask=brake_mask,
+            w_tra=w_tra,
             X_init=self._mpc_X, U_init=self._mpc_U)
         if ok:
             self._mpc_X, self._mpc_U = Xs, Us
@@ -610,6 +629,7 @@ class Robot:
             self.controls_prediction = np.column_stack([Us, np.zeros(H)])
             control = self.controls_prediction[0, :]
             self.mpc_fail_streak = 0
+            self._plan_left = H - 1        # controls U[1..H-1] left for the fallback
         else:
             log.warning("[Robot %d] MPC solve failed at t=%.2f", self.index, self.time_stamp)
             control = self._fallback_control()
