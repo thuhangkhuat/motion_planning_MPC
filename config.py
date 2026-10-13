@@ -30,7 +30,7 @@ VFOV = 90
 
 # ─── LiDAR ───
 LIDAR_RANGE_MIN = 0.1          # (m)
-LIDAR_ANGULAR_RES = np.pi / 90 # 2 deg per ray (rad)
+LIDAR_ANGULAR_RES = np.pi / 180 # 2 deg per ray (rad)
 LIDAR_NOISE = 0.01             # uniform range noise amplitude (m)
 LIDAR_MARCH_STEP = 0.1         # ray-marching step for circular obstacles (m, mode "march")
 LIDAR_MODE = "analytic"        # "analytic" (exact, vectorised) | "march" (original)
