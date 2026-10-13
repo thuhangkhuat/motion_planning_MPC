@@ -54,6 +54,7 @@ class MPCProblem:
         H = cfg["HORIZON_LENGTH"]
         dt = cfg["TIMESTEP"]
         R = cfg["ROBOT_RADIUS"]
+        Rc = cfg["CORRIDOR_MARGIN"]          # hard-corridor margin (R + LiDAR sampling error)
         Ls = cfg["COST_LENGTH_SCALE"]
         Us = cfg["COST_ACCEL_SCALE"]
 
@@ -101,13 +102,14 @@ class MPCProblem:
         # deeper than now, a UAV at rest can always comply (half of UMAX), and the
         # time to get out grows with e: ~0.7 s for 0.25 m, ~1.6 s for 2.25 m (a
         # fixed 1 s deadline was infeasible for 2.25 m, another deadlock in scen2).
-        # A UAV outside the margin has e = 0: plain A p <= b - R at every step.
+        # A UAV outside the margin has e = 0: plain A p <= b - Rc at every step
+        # (Rc = CORRIDOR_MARGIN: R plus the LiDAR sampling error, see config.py).
         a_rec = cfg["CORRIDOR_RECOVER_ACCEL_RATIO"] * cfg["UMAX"]
         t_hold = cfg["CORRIDOR_RECOVER_HOLD"]
         for i in range(1, H + 1):
             s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
             allow = ca.fmax(0, p["corr_relax"] - s_i)
-            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R + allow)
+            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - Rc + allow)
 
         # ── terminal set: every plan ends at rest (TERMINAL_STOP) ──
         # With the corridor hard on steps 1..H and v = a = 0 at step H, the rest
@@ -146,7 +148,7 @@ class MPCProblem:
             for i in range(1, Hb + 1):
                 s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
                 allow = ca.fmax(0, p["corr_relax"] - s_i)
-                opti.subject_to(ca.mtimes(p["A_hard"], Xb[i, :2].T) <= p["b_hard"] - R + allow)
+                opti.subject_to(ca.mtimes(p["A_hard"], Xb[i, :2].T) <= p["b_hard"] - Rc + allow)
             opti.subject_to(Xb[Hb, 2:6] == 0)
 
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
@@ -210,7 +212,7 @@ class MPCProblem:
         # The hard corridor with its recovery rule handles that case.
         eps = cfg["CORRIDOR_BARRIER_EPS"]
         for i in range(H):
-            dist = p["b_cost"] - ca.mtimes(p["A_cost"], X[i, :2].T) - R
+            dist = p["b_cost"] - ca.mtimes(p["A_cost"], X[i, :2].T) - Rc
             cost += p["w_corr"] * ca.sum1(Ls / (ca.fmax(dist, 0) + eps))
         # soft collision margin to every other UAV
         d_safe = cfg["COLLISION_AVOID_DISTANCE"]
@@ -286,7 +288,7 @@ class MPCProblem:
         o.set_value(p["A_hard"], Ah)
         o.set_value(p["b_hard"], bh)
         x_now = np.asarray(x0, float).reshape(-1)[:2]
-        o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["ROBOT_RADIUS"])))
+        o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["CORRIDOR_MARGIN"])))
         o.set_value(p["A_cost"], Ac)
         o.set_value(p["b_cost"], bc)
         o.set_value(p["w_corr"], cfg["W_corridor"] if use_corr_cost else 0.0)

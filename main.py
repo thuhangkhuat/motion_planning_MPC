@@ -249,11 +249,16 @@ def main(args):
                 target.update()
                 target_traj.append(target.state.copy())
 
+                # phase 1: every UAV plans from the same snapshot (time k);
+                # phase 2: all controls are applied together (Robot.commitState)
                 for r in robots:
                     t0 = time.perf_counter()
                     r.goal = target.state.copy()
+                    r.defer_update = True
                     r.computeControlSignal(robots)
                     compute_times.append(time.perf_counter() - t0)
+                for r in robots:
+                    r.commitState()
 
                 n_iter += 1
                 bar.update(1)

@@ -370,6 +370,16 @@ _derive("INFLATE_RADIUS", ROBOT_RADIUS + INFLATE_MARGIN)
 _derive("UAV_SAFE_DISTANCE", max(2 * ROBOT_RADIUS, UAV_SAFE_RATIO * VIEWING_RADIUS))
 _derive("COLLISION_AVOID_DISTANCE", max(COLLISION_AVOID_RATIO * ROBOT_RADIUS,
                                         2.5 * UAV_SAFE_DISTANCE))
+# Hard-corridor margin. The corridor faces pass through raw LiDAR points, which
+# lie up to LIDAR_NOISE behind the true surface (the noise only adds range), and
+# a convex corner between two rays sticks out in front of them by up to half
+# the ray spacing at that range. Within the reach of the plans (nominal and
+# backup) that is at most reach * LIDAR_ANGULAR_RES / 2. With R alone the
+# allowed UAV centre came within R of a real obstacle in ~37% of random scenes
+# (down to 0.1 m); with this margin in none (>= 0.63 m, 528 scenes).
+_derive("CORRIDOR_MARGIN", ROBOT_RADIUS + LIDAR_NOISE
+        + VMAX * max(HORIZON_LENGTH, BACKUP_HORIZON if CONTINGENCY else 0) * TIMESTEP
+        * LIDAR_ANGULAR_RES / 2)
 _derive("DESIRED_SEPARATION", DESIRED_SEPARATION_RATIO * VIEWING_RADIUS)
 _derive("FORMATION_GAP", FORMATION_GAP_RATIO * VIEWING_RADIUS)
 _derive("TRACK_EXIT_HYSTERESIS", TRACK_EXIT_HYSTERESIS_RATIO * VIEWING_RADIUS)
@@ -379,6 +389,9 @@ if CORRIDOR_BOX is None:
     CORRIDOR_BOX = VIEWING_RADIUS
 if WORLD_BOUNDS is None:
     WORLD_BOUNDS = (float(XLIM[0]), float(YLIM[0]), float(XLIM[1]), float(YLIM[1]))
+# Longest corridor seed that keeps pydecomp's polytope (seed bounding box grown
+# by CORRIDOR_BOX) inside the LiDAR range (robot_jps.py, _corridor_seed)
+CORRIDOR_SEED_MAX = SENSING_RADIUS - np.sqrt(2.0) * CORRIDOR_BOX
 if GRID_RAY_BINS is None:
     GRID_RAY_BINS = int(round(2 * np.pi / LIDAR_ANGULAR_RES))
 
@@ -444,6 +457,10 @@ def validate_config():
         add("WARNING", f"CORRIDOR_BOX={CORRIDOR_BOX:.2f} m < horizon reach "
                        f"VMAX*H*dt={reach:.2f} m: one corridor polytope is applied to the "
                        f"whole horizon, so the UAV is held back by the corridor wall.")
+    if CORRIDOR_SEED_MAX < GRID_RESOLUTION:
+        add("ERROR", f"sqrt(2)*CORRIDOR_BOX={np.sqrt(2) * CORRIDOR_BOX:.1f} m leaves no room within "
+                     f"SENSING_RADIUS={SENSING_RADIUS:.1f} m: corridor polytopes would reach unscanned "
+                     f"space. Lower CORRIDOR_BOX or raise SENSING_RADIUS.")
     if SENSING_RADIUS < reach:
         add("WARNING", f"SENSING_RADIUS={SENSING_RADIUS:.2f} m < horizon reach {reach:.2f} m: "
                        f"the MPC plans into space the LiDAR has not seen.")

@@ -43,7 +43,7 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -178,9 +178,31 @@ class Robot:
         self._mpc_X = None              # (H+1, 6) [px, py, vx, vy, ax, ay]
         self._mpc_U = None              # (H, 2)
 
+    # Two-phase step (main.py): with defer_update set, updateState only stores the
+    # control and commitState applies it after EVERY UAV has computed its own.
+    # Updating each UAV right after its own solve let the UAVs computed later in
+    # the same step read its state and its shifted prediction at time k+1 as if
+    # they were at time k: neighbour constraints compared positions one step
+    # (up to VMAX*dt = 1 m) apart, and leader choice / slot assignment mixed
+    # states of times k and k+1.
+    defer_update = False
+
+    def commitState(self):
+        """Apply the control stored by a deferred updateState (phase 2)."""
+        pending, self._pending = getattr(self, "_pending", None), None
+        if pending is not None:
+            defer, self.defer_update = self.defer_update, False
+            try:
+                self.updateState(*pending)
+            finally:
+                self.defer_update = defer
+
     def updateState(self, control: np.array, dt: float):
         """Applies the commanded acceleration for one step (dynamics.py, exact)."""
         assert abs(dt - TIMESTEP) < 1e-12, "the discrete model is built for TIMESTEP"
+        if self.defer_update:
+            self._pending = (np.array(control, float), dt)
+            return
         s = np.concatenate([self.state[:6], self.accel])
         s = self._A @ s + self._B @ np.asarray(control, float)
         self.state, self.accel = s[:6], s[6:]
@@ -489,7 +511,7 @@ class Robot:
         mask = np.asarray(mask) > 0
         vn = np.maximum(A @ self.state[3:5], 0.0)
         need = vn * (ACCEL_TAU + TIMESTEP) + vn ** 2 / (2 * CORRIDOR_BRAKE_ACCEL_RATIO * UMAX)
-        room = b - ROBOT_RADIUS - A @ self.state[:2]
+        room = b - CORRIDOR_MARGIN - A @ self.state[:2]
         return bool(np.all(need[mask] <= room[mask] + 1e-6))
 
     def _select_polytope(self):
@@ -1437,6 +1459,15 @@ class Robot:
         nxt = P[k + 1]
         if np.linalg.norm(nxt - pos) < 1e-6 and k + 2 < len(P):
             nxt = P[k + 2]
+        # pydecomp bounds the polytope by the seed's bounding box grown by
+        # CORRIDOR_BOX, so its farthest corner is up to |seed| + sqrt(2) *
+        # CORRIDOR_BOX from the UAV. Unscanned space has no LiDAR points and is
+        # not cut out, so the seed is shortened to keep the whole polytope within
+        # SENSING_RADIUS: the corridor is then known space (15% of polytopes
+        # reached past 50 m with unbounded seeds, up to ~240 m).
+        L = np.linalg.norm(nxt - pos)
+        if L > CORRIDOR_SEED_MAX:
+            nxt = pos + (nxt - pos) * (CORRIDOR_SEED_MAX / L)
         return np.vstack([pos, nxt])
 
     def generateSafeCorridor(self, path_ref, obstacle_points):
