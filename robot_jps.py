@@ -43,7 +43,7 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "IMPC_EPSILON", "IMPC_BUFFER", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -265,13 +265,19 @@ class Robot:
             self.list_A, self.list_b = [], []
             # zero acceleration keeps the current velocity (the UAV coasts on);
             # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
-            if CONTINGENCY and getattr(self, "_backup", None) is not None:
+            if CONTROLLER == "impc_ob" and getattr(self, "impc", None) is not None:
+                stop = self.impc._fallback()           # baseline: rest of its last plan
+            elif CONTINGENCY and getattr(self, "_backup", None) is not None:
                 stop = self._backup_control()          # backup branch stops in its corridor
             elif TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
                 stop = self._plan_tail_control()       # last plan ends at rest in its corridor
             else:
                 stop = self._brake_prediction() if FAILSAFE_BRAKE else np.zeros(self.n_control)
             self.updateState(stop, TIMESTEP)
+            return
+
+        if CONTROLLER == "impc_ob":                # baseline (impc_ob.py), same upper layers
+            self._control_impc(robots, obstacle_points, planning_goal)
             return
 
         target_pos = self.goal[:3].reshape(1, 3)
@@ -492,6 +498,20 @@ class Robot:
     # ============================================================
     # Corridor polytope selection
     # ============================================================
+    # ============================================================
+    # Baseline controller: IMPC-OB (impc_ob.py)
+    # ============================================================
+    def _control_impc(self, robots, obstacle_points, planning_goal):
+        from impc_ob import IMPCOB
+        others = [r for r in robots if r.index != self.index]
+        if getattr(self, "impc", None) is None:
+            self.impc = IMPCOB(self, len(others), _MPC_CFG())
+        team = [r.impc for r in robots if getattr(r, "impc", None) is not None]
+        self.list_A, self.list_b = [], []           # the baseline builds its own corridors
+        u = self.impc.plan(np.asarray(planning_goal, float)[:2], self.traj_ref,
+                           np.asarray(obstacle_points, float).reshape(-1, 2), others, team)
+        self.updateState(u, TIMESTEP)
+
     def _backup_tail(self):
         """Positions of the verified backup branch from the current state on
         (Xb[i] is the current state after i fallback steps since the solve that

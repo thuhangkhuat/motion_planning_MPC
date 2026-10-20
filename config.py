@@ -199,6 +199,12 @@ TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison 
 # fallback flies it. BACKUP_HORIZON * dt must allow a stop from VMAX:
 # UMAX * (BACKUP_HORIZON*dt - ACCEL_TAU - dt) >= VMAX.
 CONTINGENCY = True
+# Trajectory layer: "ours" (mpc_problem.py) | "impc_ob" (baseline, impc_ob.py:
+# Chen et al., RA-L 2023). Both use the same leader / slot / planner layers.
+# Also from the shell: CONTROLLER=impc_ob python main.py ...
+CONTROLLER = os.environ.get("CONTROLLER", "ours")
+IMPC_EPSILON = 1.0             # warning-band width (reference 0.2 m for r_a = 0.3 m, x L = 5)
+IMPC_BUFFER = 0.15             # obstacle-constraint slack bound (reference 0.03 m, x L = 5)
 BACKUP_HORIZON = 25
 W_backup = 0.1                 # effort weight of the backup branch, relative to W_u
 
@@ -552,6 +558,8 @@ def validate_config():
                        "(no drag, no acceleration lag); the simulator uses dynamics.py.")
     if LOCAL_SEARCH not in ("jps", "dijkstra"):
         add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
+    if CONTROLLER not in ("ours", "impc_ob"):
+        add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours' or 'impc_ob').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

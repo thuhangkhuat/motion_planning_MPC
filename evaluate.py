@@ -127,7 +127,8 @@ def evaluate(run_dir):
          "scenario": sd.get("name", data.get("meta", {}).get("scenario", "?")),
          "uavs": n, "steps": T, "duration_s": round(T * dt, 1),
          "finished": bool(data.get("meta", {}).get("finished", False)),
-         "CBF_BOX_RATIO": cbf, "formation_ready_s": round(ready * dt, 1)}
+         "CBF_BOX_RATIO": cbf, "formation_ready_s": round(ready * dt, 1),
+         "controller": prm.get("CONTROLLER", "ours")}
 
     # ── tracking ──
     linf = np.abs(P - tar[:, None]).max(-1)                 # (T, n) target offset per UAV
@@ -212,7 +213,8 @@ def evaluate(run_dir):
 # Output
 # ============================================================
 GROUPS = [
-    ("Run", ["scenario", "run", "uavs", "duration_s", "finished", "CBF_BOX_RATIO", "formation_ready_s"]),
+    ("Run", ["scenario", "controller", "run", "uavs", "duration_s", "finished", "CBF_BOX_RATIO",
+             "formation_ready_s"]),
     ("Tracking", ["seen_%", "lost_episodes", "longest_loss_s", "leader_offset_p50_m", "leader_offset_p95_m"]),
     ("Leader", ["sprints", "handoffs", "handoffs_in_sprint", "handoffs_outside_sprint",
                 "no_leader_steps", "multi_leader_steps"]),
