@@ -200,11 +200,27 @@ TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison 
 # UMAX * (BACKUP_HORIZON*dt - ACCEL_TAU - dt) >= VMAX.
 CONTINGENCY = True
 # Trajectory layer: "ours" (mpc_problem.py) | "impc_ob" (baseline, impc_ob.py:
-# Chen et al., RA-L 2023). Both use the same leader / slot / planner layers.
+# Chen et al., RA-L 2023; same leader / slot / planner layers) | "apfc" (baseline,
+# apfc.py: Tallamraju et al., RA-L 2019; circle formation, no slot / planner) |
+# "cbf_qp" (baseline, cbfqp.py: Wang et al., T-RO 2017; same leader / slot layers,
+# PD + safety filter, no planner) | "apf" / "pure_mpc" (the project's first version,
+# apf.py / pure_mpc.py; same leader / slot layers, no planner / corridor / CBF).
 # Also from the shell: CONTROLLER=impc_ob python main.py ...
 CONTROLLER = os.environ.get("CONTROLLER", "ours")
 IMPC_EPSILON = 1.0             # warning-band width (reference 0.2 m for r_a = 0.3 m, x L = 5)
 IMPC_BUFFER = 0.15             # obstacle-constraint slack bound (reference 0.03 m, x L = 5)
+# Baseline "apfc" (apfc.py: Tallamraju et al., RA-L 2019): circle formation
+APFC_RADIUS = None             # desired distance to the target; None -> CBF_BOX_RATIO * VIEWING_RADIUS (derived)
+APFC_W_POS = 100.0             # kappa: terminal position weight (reference activeTrackingWeight)
+APFC_W_VEL = 100.0             # terminal velocity weight
+APFC_W_INPUT = 10.0            # input weight (reference energyWeight)
+APFC_U_RATIO = 3.0 / 8.0       # MPC input bound / F_max (= UMAX); reference 3 / 8, must be < 1
+# Baseline "cbf_qp" (cbfqp.py: Wang, Ames, Egerstedt, T-RO 2017): safety filter on a PD
+CBF_QP_GAMMA = 1.0             # kappa(h) = gamma h^3 (not given in the paper)
+CBF_QP_KP = 1.0                # nominal PD: u = -KP (p - r) - KD (v - r_dot)
+CBF_QP_KD = 2.0
+# Baselines "apf" / "pure_mpc" (apf.py, pure_mpc.py): the first version of this project
+PURE_MPC_W_COL = 1.5           # W_col of the original robot_mpc.py config
 BACKUP_HORIZON = 25
 W_backup = 0.1                 # effort weight of the backup branch, relative to W_u
 
@@ -393,6 +409,8 @@ if WORLD_BOUNDS is None:
 # Longest corridor seed that keeps pydecomp's polytope (seed bounding box grown
 # by CORRIDOR_BOX) inside the LiDAR range (robot_jps.py, _corridor_seed)
 CORRIDOR_SEED_MAX = SENSING_RADIUS - np.sqrt(2.0) * CORRIDOR_BOX
+if APFC_RADIUS is None:
+    APFC_RADIUS = CBF_BOX_RATIO * VIEWING_RADIUS
 if GRID_RAY_BINS is None:
     GRID_RAY_BINS = int(round(2 * np.pi / LIDAR_ANGULAR_RES))
 
@@ -558,8 +576,9 @@ def validate_config():
                        "(no drag, no acceleration lag); the simulator uses dynamics.py.")
     if LOCAL_SEARCH not in ("jps", "dijkstra"):
         add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
-    if CONTROLLER not in ("ours", "impc_ob"):
-        add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours' or 'impc_ob').")
+    if CONTROLLER not in ("ours", "impc_ob", "apfc", "cbf_qp", "apf", "pure_mpc"):
+        add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours', 'impc_ob', 'apfc', 'cbf_qp', "
+                     f"'apf' or 'pure_mpc').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

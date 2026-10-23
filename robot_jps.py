@@ -43,7 +43,9 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "IMPC_EPSILON", "IMPC_BUFFER", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
+            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "IMPC_EPSILON", "IMPC_BUFFER",
+            "APFC_RADIUS", "APFC_W_POS", "APFC_W_VEL", "APFC_W_INPUT", "APFC_U_RATIO",
+            "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
             "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
     return {k: getattr(_c, k) for k in keys}
@@ -244,6 +246,9 @@ class Robot:
         # ─── Mode / role / slot, BEFORE planning: a satellite plans to its slot ───
         # (once per step: the mode hysteresis counters advance on every call)
         self._update_mode_and_role(robots)
+        if CONTROLLER == "apfc":                   # baseline: circle formation, no slot / planner
+            self._control_apfc(robots, obstacle_points)
+            return
         self._slot = None
         if self.mode == MODE_TRACK and not self.is_leader_role:
             self._slot = self._slot_target(robots)
@@ -252,6 +257,13 @@ class Robot:
             # a slot inside an obstacle is fine: the planner goes to the reachable
             # cell closest to it, and the MPC pulls to the end of that path
             planning_goal = np.array([self._slot[0], self._slot[1], self._track_goal[2]])
+
+        if CONTROLLER == "cbf_qp":                 # baseline: safety filter on a PD, no planner
+            self._control_cbfqp(robots, obstacle_points, planning_goal)
+            return
+        if CONTROLLER in ("apf", "pure_mpc"):      # first-version baselines, no planner / corridor / CBF
+            self._control_simple(robots, obstacle_points, planning_goal)
+            return
 
         # CHANGE #3 + #4: RRT-Connect + path commit + lead pursuit
         self.traj_ref = self.getOrientedGoalTrajectory(
@@ -510,6 +522,54 @@ class Robot:
         self.list_A, self.list_b = [], []           # the baseline builds its own corridors
         u = self.impc.plan(np.asarray(planning_goal, float)[:2], self.traj_ref,
                            np.asarray(obstacle_points, float).reshape(-1, 2), others, team)
+        self.updateState(u, TIMESTEP)
+
+    # ============================================================
+    # Baseline controller: active-perception formation control (apfc.py)
+    # ============================================================
+    def _control_apfc(self, robots, obstacle_points):
+        from apfc import APFC
+        if getattr(self, "apfc", None) is None:
+            self.apfc = APFC(self, len(robots), _MPC_CFG())
+        others = [r for r in robots if r.index != self.index]
+        self.traj_ref = None
+        self.list_A, self.list_b = [], []
+        tgt = np.asarray(self.target_tracker.get_position(), float)[:2]
+        vel = np.asarray(self.target_tracker.get_velocity(), float)[:2]
+        u = self.apfc.plan(tgt, vel, np.asarray(obstacle_points, float).reshape(-1, 2), others)
+        self.updateState(u, TIMESTEP)
+
+    # ============================================================
+    # Baseline controller: safety barrier certificates (cbfqp.py)
+    # ============================================================
+    def _control_cbfqp(self, robots, obstacle_points, planning_goal):
+        from cbfqp import CBFQP
+        if getattr(self, "cbfqp", None) is None:
+            self.cbfqp = CBFQP(self, _MPC_CFG())
+        others = [r for r in robots if r.index != self.index]
+        self.traj_ref = None
+        self.list_A, self.list_b = [], []
+        vel = np.asarray(self.target_tracker.get_velocity(), float)[:2]
+        u = self.cbfqp.plan(np.asarray(planning_goal, float)[:2], vel,
+                            np.asarray(obstacle_points, float).reshape(-1, 2), others)
+        self.updateState(u, TIMESTEP)
+
+    # ============================================================
+    # Baselines of the first version: APF / plain MPC (apf.py, pure_mpc.py)
+    # ============================================================
+    def _control_simple(self, robots, obstacle_points, planning_goal):
+        others = [r for r in robots if r.index != self.index]
+        if getattr(self, "simple", None) is None:
+            if CONTROLLER == "apf":
+                from apf import APF
+                self.simple = APF(self, _MPC_CFG())
+            else:
+                from pure_mpc import PureMPC
+                self.simple = PureMPC(self, len(others), _MPC_CFG())
+        self.traj_ref = None
+        self.list_A, self.list_b = [], []
+        u = self.simple.plan(np.asarray(planning_goal, float)[:2],
+                             np.asarray(obstacle_points, float).reshape(-1, 2), others)
         self.updateState(u, TIMESTEP)
 
     def _backup_tail(self):
