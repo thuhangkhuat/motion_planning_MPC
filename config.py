@@ -203,7 +203,7 @@ CONTINGENCY = True
 # Chen et al., RA-L 2023; same leader / slot / planner layers) | "apfc" (baseline,
 # apfc.py: Tallamraju et al., RA-L 2019; circle formation, no slot / planner) |
 # "cbf_qp" (baseline, cbfqp.py: Wang et al., T-RO 2017; same leader / slot layers,
-# PD + safety filter, no planner) | "apf" / "pure_mpc" (the project's first version,
+# PD + safety filter, no planner; "cbf_qp_lag": the same with delay-robust barriers) | "apf" / "pure_mpc" (the project's first version,
 # apf.py / pure_mpc.py; same leader / slot layers, no planner / corridor / CBF).
 # Also from the shell: CONTROLLER=impc_ob python main.py ...
 CONTROLLER = os.environ.get("CONTROLLER", "ours")
@@ -211,6 +211,10 @@ IMPC_EPSILON = 1.0             # warning-band width (reference 0.2 m for r_a = 0
 IMPC_BUFFER = 0.15             # obstacle-constraint slack bound (reference 0.03 m, x L = 5)
 # Baseline "apfc" (apfc.py: Tallamraju et al., RA-L 2019): circle formation
 APFC_RADIUS = None             # desired distance to the target; None -> CBF_BOX_RATIO * VIEWING_RADIUS (derived)
+# Leader's distance to the predicted target for the baselines with the shared
+# leader / slot layers; None -> CBF_BOX_RATIO * VIEWING_RADIUS, the offset the
+# proposed method's leader keeps (derived)
+BASELINE_LEADER_STANDOFF = None
 APFC_W_POS = 100.0             # kappa: terminal position weight (reference activeTrackingWeight)
 APFC_W_VEL = 100.0             # terminal velocity weight
 APFC_W_INPUT = 10.0            # input weight (reference energyWeight)
@@ -411,6 +415,8 @@ if WORLD_BOUNDS is None:
 CORRIDOR_SEED_MAX = SENSING_RADIUS - np.sqrt(2.0) * CORRIDOR_BOX
 if APFC_RADIUS is None:
     APFC_RADIUS = CBF_BOX_RATIO * VIEWING_RADIUS
+if BASELINE_LEADER_STANDOFF is None:
+    BASELINE_LEADER_STANDOFF = CBF_BOX_RATIO * VIEWING_RADIUS
 if GRID_RAY_BINS is None:
     GRID_RAY_BINS = int(round(2 * np.pi / LIDAR_ANGULAR_RES))
 
@@ -576,9 +582,9 @@ def validate_config():
                        "(no drag, no acceleration lag); the simulator uses dynamics.py.")
     if LOCAL_SEARCH not in ("jps", "dijkstra"):
         add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
-    if CONTROLLER not in ("ours", "impc_ob", "apfc", "cbf_qp", "apf", "pure_mpc"):
+    if CONTROLLER not in ("ours", "impc_ob", "apfc", "cbf_qp", "cbf_qp_lag", "apf", "pure_mpc"):
         add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours', 'impc_ob', 'apfc', 'cbf_qp', "
-                     f"'apf' or 'pure_mpc').")
+                     f"'cbf_qp_lag', 'apf' or 'pure_mpc').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

@@ -276,13 +276,20 @@ class IMPCOB:
         self.n_corridor_fail = 0
 
     # ---------- inputs from the shared layers ----------
-    def _tractive_point(self, pbar_K, path, gmap):
-        """Farthest reference-path vertex visible (inflated grid) from the end
-        of the predetermined trajectory; that end itself if none is."""
+    def _tractive_point(self, pbar_K, path, obs):
+        """Farthest reference-path vertex visible from the end of the
+        predetermined trajectory; that end itself if none is. Visible = the
+        segment keeps the corridor margin from every LiDAR point. As in the
+        reference code, the visibility check uses a smaller inflation than
+        the path planner (there r_a vs r_a + 0.1; here CORRIDOR_MARGIN vs the
+        planner's INFLATE_RADIUS): checking on the planner's own inflated grid
+        left no slack, the path's next vertex was "invisible" and the UAV kept
+        its own terminal point as tractive point, i.e. stood still."""
         if path is None or len(path) == 0:
             return pbar_K.copy()
+        m = self.cfg["CORRIDOR_MARGIN"] - self.cfg["IMPC_BUFFER"]
         for q in np.asarray(path, float)[::-1, :2]:
-            if gmap is None or gmap.segment_clear(pbar_K, q):
+            if not len(obs) or _closest_on_hull(_hull(np.vstack([pbar_K, q])), obs)[1].min() >= m:
                 return q.copy()
         return pbar_K.copy()
 
@@ -290,11 +297,16 @@ class IMPCOB:
         """Planes for each step k = 1..K (plus the map border)."""
         cfg, K = self.cfg, self.K
         margin = cfg["CORRIDOR_MARGIN"]
+        # the obstacle constraints have a slack up to IMPC_BUFFER, so a plan may
+        # end that much inside the margin; the collision check of the segments
+        # must accept it, otherwise the shifted plan "collides", no corridor is
+        # built and the UAV stays in the fallback for good (U0 in scen1, 400 s)
+        check = margin - cfg["IMPC_BUFFER"]
         reach = cfg["VMAX"] * K * cfg["TIMESTEP"] + margin
         if len(obs):
             obs = obs[np.linalg.norm(obs - pbar[0], axis=1) <= reach + np.linalg.norm(G - pbar[0])]
         aug = np.vstack([pbar[1:K + 1], G[None]])        # p_1..p_K, tractive point
-        segs = _segments(aug, obs, margin)
+        segs = _segments(aug, obs, check)
         if segs is None:
             return None
         segs[0] = segs[0][1:]                             # the tractive point is no decision variable
@@ -411,8 +423,9 @@ class IMPCOB:
         pbar[0] = x0[:2]
         if len(pbar) < K + 1:
             pbar = np.vstack([pbar, np.repeat(pbar[-1:], K + 1 - len(pbar), axis=0)])
-        G = self._tractive_point(pbar[K], path, getattr(getattr(r, "planner", None), "gmap", None))
-        planes = self._corridors(pbar, G, np.asarray(obs, float).reshape(-1, 2))
+        obs = np.asarray(obs, float).reshape(-1, 2)
+        G = self._tractive_point(pbar[K], path, obs)
+        planes = self._corridors(pbar, G, obs)
         if planes is None:                                # predetermined trajectory collides
             self.n_corridor_fail += 1
             return self._fallback()

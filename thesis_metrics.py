@@ -11,7 +11,13 @@ thesis_metrics.py — The four thesis metrics (metrics.py) on the benchmark runs
 The metrics are computed by metrics.run_metrics, the same code as
 collect_metrics.py, but read from runs/<dir>/ (data.pkl + config.json):
   (1) Execution time      mean compute time per UAV per step [ms]
-  (2) Total path length   sum over the UAVs [m] (and per UAV)
+  (2) Total path length   sum over the UAVs [m] (and per UAV), and the part of
+                          it flown in SEARCH, i.e. out of the formation: a
+                          satellite is in SEARCH while it is farther from the
+                          leader than the formation threshold (it enters TRACK
+                          within VIEWING_RADIUS + FORMATION_GAP, leaves it
+                          beyond that + TRACK_EXIT_HYSTERESIS); the leader is
+                          always in TRACK. Needs the status recorded by main.py.
   (3) FOV coverage        union area of the FOVs connected to the leader [m²]
                           and efficiency = area / (N · (2L)²) ∈ [0, 1]
   (4) Tracking            visibility = % of steps with the target inside >= 1 FOV,
@@ -43,6 +49,7 @@ COLUMNS = [
     ("exec_ms", "(1) Exec. time [ms]", "{:.1f}"),
     ("total_path_len", "(2) Total path length [m]", "{:.0f}"),
     ("mean_path_len", "Path length / UAV [m]", "{:.0f}"),
+    ("search_path_len", "Path length in SEARCH [m]", "{:.0f}"),
     ("fov_area", "(3) FOV coverage area [m²]", "{:.0f}"),
     ("fov_coverage_eff", "Coverage efficiency", "{:.3f}"),
     ("visibility", "(4) Visibility [%]", "{:.2f}"),
@@ -81,10 +88,28 @@ def score(run_dir, warmup):
     m = run_metrics(data, fov_side=fov_side, robot_radius=float(prm.get("ROBOT_RADIUS", 0.5)),
                     timestep=dt, warmup_steps=w)
     m["exec_ms"] = 1e3 * m["exec_time"]
+    m["search_path_len"] = search_path_length(data)
     m.update(run=os.path.basename(os.path.normpath(run_dir)),
              scenario=sd.get("name", data.get("meta", {}).get("scenario", "?")),
              uavs=len([k for k in data if isinstance(k, int)]), warmup_s=round(w * dt, 1))
     return m
+
+
+def search_path_length(data):
+    """Distance flown by all UAVs while in SEARCH (out of the formation), over
+    the whole run; nan for runs without the recorded status."""
+    ids = sorted(k for k in data if isinstance(k, int))
+    st = [data[i].get("status") for i in ids]
+    if any(s is None or len(s) == 0 for s in st):
+        return float("nan")
+    T = min(min(len(data[i]["path"]) for i in ids), min(len(s) for s in st))
+    total = 0.0
+    for i, s in zip(ids, st):
+        P = np.asarray(data[i]["path"])[:T, 1:3]
+        step = np.linalg.norm(np.diff(P, axis=0), axis=1)        # step k: k -> k+1
+        search = np.asarray(s)[1:T, 0] == 0                      # mode recorded after the step
+        total += float(step[search].sum())
+    return total
 
 
 def table(rows, per_run=False):

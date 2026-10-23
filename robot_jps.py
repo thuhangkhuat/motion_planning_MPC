@@ -257,8 +257,21 @@ class Robot:
             # a slot inside an obstacle is fine: the planner goes to the reachable
             # cell closest to it, and the MPC pulls to the end of that path
             planning_goal = np.array([self._slot[0], self._slot[1], self._track_goal[2]])
+        elif CONTROLLER != "ours" and self.is_leader_role:
+            # baselines: the leader keeps the proposed method's distance to the
+            # target instead of flying onto it, so that visibility / tracking
+            # error compare formations at the same distance. Goal = the point
+            # BASELINE_LEADER_STANDOFF from the predicted target, on the line from
+            # the target to the leader (as apfc's p_des); the satellites' slots
+            # follow the leader as in the proposed method.
+            tgt = np.asarray(self._track_goal, float)
+            d = self.state[:2] - tgt[:2]
+            n = np.linalg.norm(d)
+            u = d / n if n > 1e-6 else np.array([1.0, 0.0])
+            xy = tgt[:2] + BASELINE_LEADER_STANDOFF * u
+            planning_goal = np.array([xy[0], xy[1], tgt[2]])
 
-        if CONTROLLER == "cbf_qp":                 # baseline: safety filter on a PD, no planner
+        if CONTROLLER in ("cbf_qp", "cbf_qp_lag"):  # baseline: safety filter on a PD, no planner
             self._control_cbfqp(robots, obstacle_points, planning_goal)
             return
         if CONTROLLER in ("apf", "pure_mpc"):      # first-version baselines, no planner / corridor / CBF
@@ -545,7 +558,7 @@ class Robot:
     def _control_cbfqp(self, robots, obstacle_points, planning_goal):
         from cbfqp import CBFQP
         if getattr(self, "cbfqp", None) is None:
-            self.cbfqp = CBFQP(self, _MPC_CFG())
+            self.cbfqp = CBFQP(self, _MPC_CFG(), lag_aware=(CONTROLLER == "cbf_qp_lag"))
         others = [r for r in robots if r.index != self.index]
         self.traj_ref = None
         self.list_A, self.list_b = [], []

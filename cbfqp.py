@@ -33,7 +33,13 @@ Adaptations to this simulator (all in the comparison write-up):
     gamma = CBF_QP_GAMMA (not given in the paper); deadlock constants
     k_left = 2, k_right = 0.5, k_delta = 0.5 (not given);
   * the simulator's acceleration lag (ACCEL_TAU) is not in the paper's double
-    integrator, so the guarantee is approximate here; the applied command is
+    integrator, so the guarantee is approximate here (variant "cbf_qp"); the
+    variant "cbf_qp_lag" (lag_aware=True) enforces every barrier both on the
+    current state and on the state predicted T_d = ACCEL_TAU + TIMESTEP ahead
+    with the current actual accelerations (p + v T_d + a T_d^2 / 2, v + a T_d),
+    a standard delay-robust CBF: it moves the safety distance out by the closing displacement over the
+    delay, which the plain filter ignores (it let the UAVs accelerate towards an
+    obstacle until h was small, then the lagged braking came too late); the applied command is
     saturated to keep the speed <= VMAX (low-level controller, as in apfc.py);
   * the 2-variable QP is solved exactly as a projection onto the feasible
     polygon (the paper uses MATLAB quadprog), the LP with scipy linprog.
@@ -48,8 +54,9 @@ import numpy as np
 class CBFQP:
     """One per UAV. plan() returns the filtered acceleration command."""
 
-    def __init__(self, robot, cfg):
+    def __init__(self, robot, cfg, lag_aware=False):
         self.robot, self.cfg = robot, cfg
+        self.Td = (cfg["ACCEL_TAU"] + cfg["TIMESTEP"]) if lag_aware else 0.0
         self.alpha = cfg["UMAX"] / np.sqrt(2.0)
         self.beta = cfg["VMAX"]
         self.gamma = cfg["CBF_QP_GAMMA"]
@@ -78,16 +85,40 @@ class CBFQP:
              + alpha_sum * nv / root)
         return -n, share * b, h
 
+    def _pred(self, robot):
+        """Position / velocity T_d ahead with the current actual acceleration
+        (T_d = 0 for the plain filter)."""
+        p, v = robot.state[:2], robot.state[3:5]
+        if self.Td == 0.0:
+            return p, v
+        a = np.asarray(getattr(robot, "accel", np.zeros(3)), float)[:2]
+        T = self.Td
+        return p + v * T + 0.5 * a * T * T, v + a * T
+
     def _rows(self, others, obs):
+        rows = self._rows_at(others, obs, predicted=False)
+        if self.Td > 0.0:
+            # delay-robust: the barriers must hold now AND on the state T_d ahead;
+            # with the predicted ones alone the lagged command chattered at the
+            # boundary (pushing in while the actual acceleration still braked)
+            # and the UAV crept into the margin
+            rows += self._rows_at(others, obs, predicted=True)
+        return rows
+
+    def _rows_at(self, others, obs, predicted):
         r = self.robot
-        p, v = r.state[:2], r.state[3:5]
+        if predicted:
+            p, v = self._pred(r)
+        else:
+            p, v = r.state[:2], r.state[3:5]
         rows = []
         for o in others:
-            dp = p - o.state[:2]
-            if np.linalg.norm(dp) > self.DN:
+            po, vo = self._pred(o) if predicted else (o.state[:2], o.state[3:5])
+            dp = p - po
+            if np.linalg.norm(r.state[:2] - o.state[:2]) > self.DN:
                 continue
             self._k_scale = 1.0
-            row = self._pair_row(dp, v - o.state[3:5], 2 * self.alpha, self.Ds, 0.5)
+            row = self._pair_row(dp, v - vo, 2 * self.alpha, self.Ds, 0.5)
             if row is not None:
                 rows.append(row)
         reach = self.Dob + (self.beta ** 2) / (2 * self.alpha) + self.beta
