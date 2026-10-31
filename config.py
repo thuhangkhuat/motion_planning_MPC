@@ -200,7 +200,9 @@ TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison 
 # UMAX * (BACKUP_HORIZON*dt - ACCEL_TAU - dt) >= VMAX.
 CONTINGENCY = True
 # Trajectory layer: "ours" (mpc_problem.py) | "impc_ob" (baseline, impc_ob.py:
-# Chen et al., RA-L 2023; same leader / slot / planner layers) | "apfc" (baseline,
+# Chen et al., RA-L 2023; same leader / slot / planner layers; "impc_ob_rec": the
+# same with a recovery rule when newly seen obstacles cut the predetermined
+# trajectory, see impc_ob.py) | "apfc" (baseline,
 # apfc.py: Tallamraju et al., RA-L 2019; circle formation, no slot / planner) |
 # "cbf_qp" (baseline, cbfqp.py: Wang et al., T-RO 2017; same leader / slot layers,
 # PD + safety filter, no planner; "cbf_qp_lag": the same with delay-robust barriers) | "apf" / "pure_mpc" (the project's first version,
@@ -582,8 +584,9 @@ def validate_config():
                        "(no drag, no acceleration lag); the simulator uses dynamics.py.")
     if LOCAL_SEARCH not in ("jps", "dijkstra"):
         add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
-    if CONTROLLER not in ("ours", "impc_ob", "apfc", "cbf_qp", "cbf_qp_lag", "apf", "pure_mpc"):
-        add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours', 'impc_ob', 'apfc', 'cbf_qp', "
+    if CONTROLLER not in ("ours", "impc_ob", "impc_ob_rec", "apfc", "cbf_qp", "cbf_qp_lag", "apf",
+                          "pure_mpc"):
+        add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours', 'impc_ob', 'impc_ob_rec', 'apfc', 'cbf_qp', "
                      f"'cbf_qp_lag', 'apf' or 'pure_mpc').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")

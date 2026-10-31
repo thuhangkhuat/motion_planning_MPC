@@ -37,6 +37,20 @@ Adaptations to this simulator (all in the comparison write-up):
     the same; the problem is built once and re-solved with parameters;
   * priority 1 ("reached the goal") is re-evaluated every step, since the
     slots move (the reference sets it once, for fixed goals).
+
+Variant "impc_ob_rec" (recover=True). The feasibility guarantee of the paper
+needs a known map: the corridor is built around the predetermined trajectory,
+which then never collides. With LiDAR, a part of an obstacle hidden behind its
+own silhouette shows up only when the UAV is close, cuts the predetermined
+trajectory, and no corridor exists; the reference has no rule for that, and
+"impc_ob" then flies the rest of its last plan (into the obstacle) and stays
+there. impc_ob_rec instead
+  * replaces the predetermined trajectory by braking from the current state
+    and builds the corridor around it (with the tractive point if possible),
+  * when the UAV is already inside the margin, lowers the margin to its
+    current clearance for that step, so that it can leave,
+  * in the fallback, flies the rest of the last plan only while it keeps
+    margin - buffer from the current LiDAR points, and brakes otherwise.
 """
 
 import numpy as np
@@ -249,8 +263,11 @@ class IMPCOB:
     """One per UAV. plan() returns the control to apply this step and leaves
     robot.states_prediction = the new predetermined trajectory."""
 
-    def __init__(self, robot, n_others, cfg):
+    def __init__(self, robot, n_others, cfg, recover=False):
         self.robot, self.cfg = robot, cfg
+        self.recover = recover
+        self._Ad, self._Bd = dynamics.model(cfg["TIMESTEP"], cfg["D_FRAC"], cfg["ACCEL_TAU"], 2)
+        self.n_recover = 0
         self.K = cfg["HORIZON_LENGTH"]
         self.L = cfg["UAV_SAFE_DISTANCE"] / (2 * 0.3)    # length scale vs the reference code
         self.eps = cfg["IMPC_EPSILON"]
@@ -276,7 +293,7 @@ class IMPCOB:
         self.n_corridor_fail = 0
 
     # ---------- inputs from the shared layers ----------
-    def _tractive_point(self, pbar_K, path, obs):
+    def _tractive_point(self, pbar_K, path, obs, margin=None):
         """Farthest reference-path vertex visible from the end of the
         predetermined trajectory; that end itself if none is. Visible = the
         segment keeps the corridor margin from every LiDAR point. As in the
@@ -287,16 +304,16 @@ class IMPCOB:
         its own terminal point as tractive point, i.e. stood still."""
         if path is None or len(path) == 0:
             return pbar_K.copy()
-        m = self.cfg["CORRIDOR_MARGIN"] - self.cfg["IMPC_BUFFER"]
+        m = (self.cfg["CORRIDOR_MARGIN"] if margin is None else margin) - self.cfg["IMPC_BUFFER"]
         for q in np.asarray(path, float)[::-1, :2]:
             if not len(obs) or _closest_on_hull(_hull(np.vstack([pbar_K, q])), obs)[1].min() >= m:
                 return q.copy()
         return pbar_K.copy()
 
-    def _corridors(self, pbar, G, obs):
+    def _corridors(self, pbar, G, obs, margin=None):
         """Planes for each step k = 1..K (plus the map border)."""
         cfg, K = self.cfg, self.K
-        margin = cfg["CORRIDOR_MARGIN"]
+        margin = cfg["CORRIDOR_MARGIN"] if margin is None else margin
         # the obstacle constraints have a slack up to IMPC_BUFFER, so a plan may
         # end that much inside the margin; the collision check of the segments
         # must accept it, otherwise the shifted plan "collides", no corridor is
@@ -426,9 +443,11 @@ class IMPCOB:
         obs = np.asarray(obs, float).reshape(-1, 2)
         G = self._tractive_point(pbar[K], path, obs)
         planes = self._corridors(pbar, G, obs)
+        if planes is None and self.recover:
+            pbar, G, planes = self._recover(x0, path, obs, pbar, G)
         if planes is None:                                # predetermined trajectory collides
             self.n_corridor_fail += 1
-            return self._fallback()
+            return self._fallback(obs)
         others_pbar = [np.asarray(o.states_prediction, float)[:, :2] for o in others]
         others_prio = [getattr(getattr(o, "impc", None), "priority", 2) for o in others]
         Aij, bij, on, rho = self._inter(pbar, others_pbar, others_prio, target)
@@ -446,7 +465,7 @@ class IMPCOB:
             Xi, Ui = np.tile(x0, (K + 1, 1)), np.zeros((K, 2))
         ok, X, U, w = self.prob.solve(x0, G, sig, planes, Aij, bij, on, rho, Xi, Ui)
         if not ok:
-            return self._fallback()
+            return self._fallback(obs)
         self._X = np.vstack([X[1:], X[-1:]])
         self._Uw = np.vstack([U[1:], np.zeros((1, 2))])
         self.U, self.left = U, K - 1
@@ -461,12 +480,66 @@ class IMPCOB:
         self._deadlock(X[1:, :2], target, team)
         return np.array([U[0, 0], U[0, 1], 0.0])
 
-    def _fallback(self):
-        """Solve failed: fly the rest of the last plan (it ends at rest)."""
+    # ---------- recovery (variant impc_ob_rec) ----------
+    def _brake_u(self, v):
+        """Braking command: cancel the velocity over ACCEL_TAU + TIMESTEP, at most UMAX."""
+        u = -np.asarray(v, float) / (self.cfg["ACCEL_TAU"] + self.cfg["TIMESTEP"])
+        n = np.linalg.norm(u)
+        return u * (self.cfg["UMAX"] / n) if n > self.cfg["UMAX"] else u
+
+    def _brake_traj(self, x0):
+        """States (K+1, 6) of braking from x0 with the simulator's model."""
+        X = [np.asarray(x0, float)]
+        for _ in range(self.K):
+            X.append(self._Ad @ X[-1] + self._Bd @ self._brake_u(X[-1][2:4]))
+        return np.array(X)
+
+    def _recover(self, x0, path, obs, pbar, G):
+        """No corridor around the predetermined trajectory: rebuild it from
+        braking; returns (pbar, G, planes), planes None if that fails too."""
+        self.n_recover += 1
+        K = self.K
+        pb = self._brake_traj(x0)[:, :2]
+        for Gb in (self._tractive_point(pb[K], path, obs), pb[K].copy()):
+            planes = self._corridors(pb, Gb, obs)
+            if planes is not None:
+                return pb, Gb, planes
+        # already inside the margin: lower it to the current clearance
+        buf = self.cfg["IMPC_BUFFER"]
+        d = np.min([np.linalg.norm(obs - q, axis=1).min() for q in pb]) if len(obs) else np.inf
+        m = min(self.cfg["CORRIDOR_MARGIN"], d - 0.01 + buf)
+        if m - buf > 0.0:
+            for Gb in (self._tractive_point(pb[K], path, obs, m), pb[K].copy()):
+                planes = self._corridors(pb, Gb, obs, m)
+                if planes is not None:
+                    return pb, Gb, planes
+        return pbar, G, None
+
+    def _tail_collides(self, obs):
+        """The rest of the last plan comes within margin - buffer of a current LiDAR point."""
+        if not len(obs):
+            return False
+        m = self.cfg["CORRIDOR_MARGIN"] - self.cfg["IMPC_BUFFER"]
+        P = np.asarray(self.robot.states_prediction, float)[:, :2]
+        return any(np.linalg.norm(obs - q, axis=1).min() < m for q in P)
+
+    def _fallback(self, obs=None):
+        """Solve failed: fly the rest of the last plan (it ends at rest).
+        With recover, only while that rest is clear of the current LiDAR
+        points; otherwise brake (and publish the braking as the prediction)."""
         r = self.robot
         r.mpc_fail_streak = getattr(r, "mpc_fail_streak", 0) + 1
         if self.U is not None and self.left > 0:
-            u = self.U[self.K - self.left]
-            self.left -= 1
+            if not (self.recover and obs is not None and self._tail_collides(obs)):
+                u = self.U[self.K - self.left]
+                self.left -= 1
+                return np.array([u[0], u[1], 0.0])
+            self.left = 0
+        if self.recover:
+            x0 = np.concatenate([r.state[[0, 1, 3, 4]], r.accel[:2]])
+            X = self._brake_traj(x0)
+            r.states_prediction = np.column_stack(
+                [X[:, :2], np.full(self.K + 1, r.state[2]), X[:, 2:4], np.zeros(self.K + 1)])
+            u = self._brake_u(x0[2:4])
             return np.array([u[0], u[1], 0.0])
         return np.zeros(3)

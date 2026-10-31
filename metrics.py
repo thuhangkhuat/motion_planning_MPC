@@ -158,11 +158,14 @@ def fov_coverage(centers, side, target=None, leader_idx=None,
 # ────────────────────────────────────────────────────────────
 def run_metrics(data, fov_side, robot_radius, timestep,
                 cov_mode="leader_component", connect_slack=None,
-                warmup_steps=0):
+                warmup_steps=0, alive=None):
     """
     data: dict pickle từ main.py (keys: int robot idx + "meta").
     fov_side = 2 * VIEWING_RADIUS.
     warmup_steps: bỏ qua N bước đầu (giai đoạn tiếp cận) khi tính coverage/vis.
+    alive: (T, n) bool hoặc None. Nếu có, trả thêm safe_fov_coverage_eff /
+           safe_visibility: coverage và visibility chỉ với các UAV còn "sống"
+           (UAV coi như rơi từ lần va chạm đầu tiên), chia cho n FOV ban đầu.
 
     Leader mỗi frame = UAV gần target nhất (argmin khoảng cách Euclid).
 
@@ -198,9 +201,26 @@ def run_metrics(data, fov_side, robot_radius, timestep,
     cov_mean = float(cov_series[s:].mean())
     cov_eff = float((cov_series[s:] / ideal).mean())
 
+    safe = {}
+    if alive is not None:
+        alive = np.asarray(alive, bool)[:T]
+        safe_cov = cov_series.copy()
+        for t in np.flatnonzero(~alive.all(axis=1)):
+            idx = np.flatnonzero(alive[t])
+            if not len(idx):
+                safe_cov[t] = 0.0
+                continue
+            lead = int(np.argmin(np.linalg.norm(pos[t, idx] - tar[t], axis=1)))
+            safe_cov[t], _ = fov_coverage(pos[t, idx], fov_side, leader_idx=lead,
+                                          connect_slack=connect_slack, mode=cov_mode)
+        safe["safe_fov_coverage_eff"] = float((safe_cov[s:] / ideal).mean())
+
     # ── (4) Tracking ── (diff/d_inf/d_euc đã tính ở trên)
     visible = d_inf.min(axis=1) <= L                 # target trong >=1 FOV
     vis_ratio = 100.0 * visible[s:].mean()
+    if alive is not None:                            # chỉ FOV của UAV còn sống
+        safe_vis = np.where(alive, d_inf, np.inf).min(axis=1) <= L
+        safe["safe_visibility"] = 100.0 * safe_vis[s:].mean()
     track_err = float(d_euc.min(axis=1)[s:].mean())  # tới UAV gần nhất
 
     # ── (2) Path length ──
@@ -240,4 +260,5 @@ def run_metrics(data, fov_side, robot_radius, timestep,
         min_inter_uav=min_inter_uav,
         target_reached=meta.get("target_reached", None),
         sim_time=float(paths[0][T - 1, 0]),
+        **safe,
     )

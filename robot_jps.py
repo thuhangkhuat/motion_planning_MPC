@@ -290,8 +290,9 @@ class Robot:
             self.list_A, self.list_b = [], []
             # zero acceleration keeps the current velocity (the UAV coasts on);
             # with FAILSAFE_BRAKE the UAV brakes at up to UMAX instead
-            if CONTROLLER == "impc_ob" and getattr(self, "impc", None) is not None:
-                stop = self.impc._fallback()           # baseline: rest of its last plan
+            if CONTROLLER in ("impc_ob", "impc_ob_rec") and getattr(self, "impc", None) is not None:
+                stop = self.impc._fallback(           # baseline: rest of its last plan
+                    np.asarray(obstacle_points, float).reshape(-1, 2))
             elif CONTINGENCY and getattr(self, "_backup", None) is not None:
                 stop = self._backup_control()          # backup branch stops in its corridor
             elif TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
@@ -301,7 +302,7 @@ class Robot:
             self.updateState(stop, TIMESTEP)
             return
 
-        if CONTROLLER == "impc_ob":                # baseline (impc_ob.py), same upper layers
+        if CONTROLLER in ("impc_ob", "impc_ob_rec"):  # baseline (impc_ob.py), same upper layers
             self._control_impc(robots, obstacle_points, planning_goal)
             return
 
@@ -530,7 +531,7 @@ class Robot:
         from impc_ob import IMPCOB
         others = [r for r in robots if r.index != self.index]
         if getattr(self, "impc", None) is None:
-            self.impc = IMPCOB(self, len(others), _MPC_CFG())
+            self.impc = IMPCOB(self, len(others), _MPC_CFG(), recover=(CONTROLLER == "impc_ob_rec"))
         team = [r.impc for r in robots if getattr(r, "impc", None) is not None]
         self.list_A, self.list_b = [], []           # the baseline builds its own corridors
         u = self.impc.plan(np.asarray(planning_goal, float)[:2], self.traj_ref,

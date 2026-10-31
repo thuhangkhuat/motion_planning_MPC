@@ -21,7 +21,10 @@ UAV_SAFE_DISTANCE, as in every MPC of the comparison (the original treated
 them as static LiDAR points, which let two UAVs come 0.5 m close); the
 goal in the tracking cost is moved to at most the horizon reach from the UAV
 (a goal hundreds of metres away made the tracking cost dwarf the collision
-cost).
+cost); the map bounds (WORLD_BOUNDS shrunk by R, slack with the large
+penalty W_bounds_slack), as in every MPC of the comparison (the original had
+none: in scen3 the satellites overshot their slots at the map border, up to
+18 m outside).
 
 Scaling from the original (VMAX = 1 m/s, R = 0.25 m, same 0.1 s step):
 lengths x L = VMAX / 1 m/s, so its sigmoid centre sqrt(0.25) m becomes L / 2
@@ -54,6 +57,7 @@ class PureMPC:
         opti = ca.Opti()
         X = opti.variable(H + 1, 6)
         U = opti.variable(H, 2)
+        Sb = opti.variable(H, 1)                          # map-bounds slack
         p = {"x0": opti.parameter(1, 6), "goal": opti.parameter(1, 2),
              "hard": opti.parameter(self.Mh, 2), "hmin": opti.parameter(self.Mh, 1),
              "obs": opti.parameter(self.M, 2),
@@ -69,6 +73,14 @@ class PureMPC:
             opti.subject_to(dh >= p["hmin"])
             for j in range(n_others):                     # other UAVs: their published plans
                 opti.subject_to(ca.sumsqr(X[i + 1, :2] - p["oth"][j][i + 1, :]) >= p["omin"][j])
+        bx0, by0, bx1, by1 = cfg["WORLD_BOUNDS"]
+        for i in range(H):                                # map bounds (soft-hard, as mpc_problem.py)
+            px, py = X[i + 1, 0], X[i + 1, 1]
+            opti.subject_to(px >= bx0 + R - Sb[i])
+            opti.subject_to(px <= bx1 - R + Sb[i])
+            opti.subject_to(py >= by0 + R - Sb[i])
+            opti.subject_to(py <= by1 - R + Sb[i])
+        opti.subject_to(Sb >= 0)
         c2 = (L / 2) ** 2
         cost = 0
         for i in range(H):
@@ -76,6 +88,7 @@ class PureMPC:
             cost += cfg["W_tra"] * ca.sumsqr(X[i, :2] - p["goal"]) / L ** 2
             d2 = ca.sum2((ca.repmat(X[i, :2], self.M, 1) - p["obs"]) ** 2)
             cost += cfg["PURE_MPC_W_COL"] * ca.sum1(0.5 * (1 - ca.tanh(2 * (d2 - c2) / L ** 2)))
+        cost += cfg["W_bounds_slack"] * (ca.sum1(Sb) + ca.sumsqr(Sb))
         opti.minimize(cost)
         opts = dict(cfg["IPOPT_OPTIONS"])
         opts.setdefault("expand", True)
