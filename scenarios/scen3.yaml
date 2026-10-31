@@ -1,9 +1,9 @@
 # Leader hand-off test (copy of scen3 with sprints): the target sprints faster
 # than the UAVs can fly. Units: metres, m/s. See scenarios/README.md for every key.
 #
-# Same map, starts and target path as scen3. Most legs are 5 m/s; four legs are
-# 13 m/s sprints (> VMAX = 10) in four directions: leg 4 east, leg 7 south,
-# leg 11 north, leg 18 west. During a sprint the leader falls behind, the target
+# 1000 x 1000 m map. Most legs are 5 m/s; four legs are 13 m/s sprints
+# (> VMAX = 10) in four directions, spread over the mission: leg 9 west (99 m),
+# leg 27 south (84 m), leg 37 north (99 m), leg 48 east (93 m). During a sprint the leader falls behind, the target
 # leaves its FOV and enters the FOV of the satellite on that side, which takes
 # over as leader. CBF_BOX_RATIO 0.5 keeps the target well inside the leader's FOV
 # on the 5 m/s legs, so the hand-offs come from the sprints only.
@@ -83,6 +83,7 @@ target:
   - [820.306, 381.463]
   - [809.551, 599.258]
   - [863.327, 643.623]
+  speeds: [5, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5]
   # one per leg. A 13 m/s (> VMAX) sprint of 80 m (~6 s) makes the leader lose the
   # target to the satellite ahead once; much longer sprints also outrun the new
   # leader and the target is lost until it slows down.
