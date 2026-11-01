@@ -36,7 +36,12 @@ Adaptations to this simulator (all in the comparison write-up):
     conic solver is installed here). The problem is convex, so the optimum is
     the same; the problem is built once and re-solved with parameters;
   * priority 1 ("reached the goal") is re-evaluated every step, since the
-    slots move (the reference sets it once, for fixed goals).
+    slots move (the reference sets it once, for fixed goals);
+  * the shared formation layer contracts the slots ahead of obstacles seen
+    along the leader's plan extrapolated to SLOT_LOOKAHEAD_TIME; a plan that
+    ends at rest stopped that look-ahead ~6 m ahead (vs ~26 m for "ours"), so
+    for IMPC-OB it is taken along the leader's current velocity instead
+    (robot_jps.py, _update_slot_scale).
 
 Variant "impc_ob_rec" (recover=True). The feasibility guarantee of the paper
 needs a known map: the corridor is built around the predetermined trajectory,

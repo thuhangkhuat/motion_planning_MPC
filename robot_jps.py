@@ -1280,9 +1280,18 @@ class Robot:
             # than one horizon, so a later contraction makes the satellite trail it
             lp = np.asarray(lp)
             pts = list(lp[::max(1, HORIZON_LENGTH // 4), :2])
-            t_extra = SLOT_LOOKAHEAD_TIME - HORIZON_LENGTH * TIMESTEP
-            for tau in np.arange(0.5, t_extra + 1e-9, 0.5):
-                pts.append(lp[-1, :2] + lp[-1, 3:5] * tau)
+            if CONTROLLER in ("impc_ob", "impc_ob_rec"):
+                # IMPC-OB plans end at rest (v_K = 0): extrapolating the final
+                # velocity added nothing and the look-ahead stopped ~6 m ahead (vs
+                # ~26 m = 5 s of flight for "ours", scen1), so the formation saw the
+                # obstacles later and contracted less; look SLOT_LOOKAHEAD_TIME
+                # ahead along the leader's current velocity instead
+                for tau in np.arange(0.5, SLOT_LOOKAHEAD_TIME + 1e-9, 0.5):
+                    pts.append(lp[0, :2] + lp[0, 3:5] * tau)
+            else:
+                t_extra = SLOT_LOOKAHEAD_TIME - HORIZON_LENGTH * TIMESTEP
+                for tau in np.arange(0.5, t_extra + 1e-9, 0.5):
+                    pts.append(lp[-1, :2] + lp[-1, 3:5] * tau)
         free = min(self._free_ray_length(robots, p, u, full) for p in pts)
         target = float(np.clip(free / full, SLOT_MIN_RATIO, 1.0))
         prev = getattr(self, "slot_scale", 1.0)
