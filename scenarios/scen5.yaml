@@ -12,8 +12,8 @@ tar_max_speed: 5          # target speed (m/s)
 
 starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
 - [430.427, 167.702, 30]
-- [692.587, 100.481, 30]
-- [98.357, 476.916, 30]
+- [765.185, 409.696, 30]
+- [212.632, 620.768, 30]
 
 target:
   waypoints:              # edit with pick_waypoints.py (key t)

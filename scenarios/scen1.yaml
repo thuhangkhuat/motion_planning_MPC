@@ -11,11 +11,11 @@ viewing_radius: 25        # half side of the camera footprint (m)
 tar_max_speed: 5          # target speed (m/s)
 
 starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
-- [474.792, 392.219, 30]
-- [380.683, 57.46, 30]
+- [638.81, 354.575, 30]
+- [708.72, 182.49, 30]
 - [83.569, 101.826, 30]
-- [125.245, 337.098, 30]
-- [28.448, 194.59, 30]
+- [118.523, 704.122, 30]
+- [259.686, 486.327, 30]
 
 target:
   waypoints:              # edit with pick_waypoints.py (key t)

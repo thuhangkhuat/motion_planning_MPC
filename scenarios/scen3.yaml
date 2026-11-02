@@ -15,15 +15,15 @@ viewing_radius: 25        # half side of the camera footprint (m)
 tar_max_speed: 5          # target speed on the legs without an entry in `speeds` (m/s)
 
 starts:                   # [x, y, z]; around the target's first waypoint
-- [164.233, 329.031, 3]
-- [223.387, 674.545, 3]
-- [330.94, 752.521, 3]
+- [78.191, 378.774, 3]
+- [320.185, 761.932, 3]
+- [359.173, 626.146, 3]
 - [343.04, 349.197, 3]
-- [244.898, 236.267, 3]
-- [87.602, 451.373, 3]
+- [129.279, 92.415, 3]
+- [466.726, 112.581, 3]
 - [83.569, 682.611, 3]
 - [207.254, 842.596, 3]
-- [454.626, 330.376, 3]
+- [548.735, 311.554, 3]
 
 target:
   waypoints:              # edit with pick_waypoints.py (key t)
