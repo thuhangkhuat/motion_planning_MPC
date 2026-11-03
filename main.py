@@ -4,6 +4,7 @@ Run the multi-UAV MPC-CBF target-tracking simulation.
     python main.py --scenario 6
     python main.py --scenario 6 --seed 1 --max-steps 300 --quiet
     python main.py --scenario 6 --target-mode rrt --force-regen
+    python main.py --scenario 6 --seed 1 --start-jitter 20   # UAV starts moved <= 20 m
 
 Each run writes to runs/<name>/ :
     data.pkl      simulation data (same format as before, readable by plot_*.py)
@@ -24,6 +25,9 @@ def parse_args():
     p.add_argument("--scenario", help="scenario number or name in scenarios/ "
                                       "(default: env SCENARIO or config)")
     p.add_argument("--seed", type=int, default=0, help="numpy seed (default 0)")
+    p.add_argument("--start-jitter", type=float, default=0.0,
+                   help="move each UAV start by <= this many metres, drawn from --seed "
+                        "(same starts for every controller with the same seed; default 0)")
     p.add_argument("--max-steps", type=int, default=None,
                    help="stop after N steps (default: until the target reaches its goal)")
     p.add_argument("--out", default=None, help="run directory (default runs/scen<N>_..._<timestamp>)")
@@ -101,6 +105,7 @@ def config_snapshot(args, target):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "argv": sys.argv,
         "seed": args.seed,
+        "start_jitter": args.start_jitter,
         "git_commit": _git_commit(),
         "scenario": SCENARIO_NAME,
         "scenario_def": _jsonable(SCENARIO_DEF),
@@ -110,6 +115,45 @@ def config_snapshot(args, target):
         "params": params,
     }
     return snap
+
+
+def jitter_starts(radius, seed, tries=200):
+    """Move every UAV start uniformly inside a disc of `radius` m, in place
+    (config.STARTS, GOALS, SCENARIO_DEF["starts"]). Its own generator, seeded by
+    `seed` and the scenario name only, so the LIDAR noise stream is unchanged and
+    every controller gets the same starts for one seed. A draw is kept if it is inside WORLD_BOUNDS, at
+    least half its original obstacle clearance from the obstacles and at least
+    half the original smallest separation from the other starts; a UAV with no
+    valid draw keeps its start."""
+    from evaluate import obstacle_clearance
+    import zlib
+    rng = np.random.default_rng([seed, zlib.crc32(SCENARIO_NAME.encode())])
+    rects, circles = SCENARIO_DEF.get("rects") or [], SCENARIO_DEF.get("circles") or []
+    P0 = STARTS[:, :2].copy()
+    clear0 = obstacle_clearance(P0, rects, circles)
+    n = len(P0)
+    sep0 = min((np.linalg.norm(P0[i] - P0[j]) for i in range(n) for j in range(i + 1, n)),
+               default=np.inf)
+    xmin, ymin, xmax, ymax = config.WORLD_BOUNDS
+    R = config.ROBOT_RADIUS
+    P = P0.copy()
+    for i in range(n):
+        for _ in range(tries):
+            r, a = radius * np.sqrt(rng.random()), 2 * np.pi * rng.random()
+            q = P0[i] + r * np.array([np.cos(a), np.sin(a)])
+            ok = (xmin + R <= q[0] <= xmax - R and ymin + R <= q[1] <= ymax - R
+                  and obstacle_clearance(q[None], rects, circles)[0] >= max(2 * R, 0.5 * clear0[i])
+                  and all(np.linalg.norm(q - P[j]) >= 0.5 * sep0 for j in range(i)))
+            if ok:
+                P[i] = q
+                break
+        else:
+            log.warning("start jitter: no valid draw for UAV %d, keeping its start", i)
+    STARTS[:, :2] = P
+    GOALS[:, :2] = P
+    SCENARIO_DEF["starts"] = STARTS.tolist()
+    log.info("start jitter %.1f m (seed %d): moved %s m", radius, seed,
+             np.round(np.linalg.norm(P - P0, axis=1), 1).tolist())
 
 
 def setup_run_dir(args):
@@ -203,6 +247,9 @@ def main(args):
         for m in errors:
             log.error("[config] %s", m)
         sys.exit(2)
+
+    if args.start_jitter > 0:
+        jitter_starts(args.start_jitter, args.seed)
 
     from tqdm import tqdm
     from tqdm.contrib.logging import logging_redirect_tqdm

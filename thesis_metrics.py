@@ -1,7 +1,7 @@
 """
 thesis_metrics.py — The four thesis metrics (metrics.py) on the benchmark runs.
 
-    python thesis_metrics.py                    # latest run of each benchmark (scen1..scen4)
+    python thesis_metrics.py                    # latest run of each benchmark (scen1..scen6)
     python thesis_metrics.py --all              # every run of each benchmark: mean ± std over runs
     python thesis_metrics.py runs/<dir> ...     # given runs
     python thesis_metrics.py --all --per-run    # every run on its own line
@@ -13,19 +13,20 @@ closer than 2R, outside the map): in the simulator a UAV flies on through an
 obstacle, so nothing after the team's first collision t_c has a physical
 meaning. No run is dropped; the metrics are cut at t_c (as SPL / the CARLA
 driving score penalise a failure instead of discarding the episode):
-  Collision-free          1 if no UAV ever collides (mean over runs = success rate)
+  success (CSV)           1 if no UAV ever collides (mean over runs = success rate;
+                          with one run per scenario it equals Completion == 100)
   Completion [%]          t_c / T (100 without a collision)
   (1) Exec. time          compute time per UAV per step before t_c [ms]: mean,
                           95th percentile and max (the control period is TIMESTEP)
-  (2a) Gathering SEARCH   path flown by each UAV from the start until it first
-                          enters TRACK (joins the formation; the leader is in TRACK
-                          from its election), summed over the UAVs [m]; "-" if a UAV
-                          has not joined before t_c (gathered_uavs in the CSV)
-  (2b) Re-formation       SEARCH path after each UAV first joined the formation
-       SEARCH             and before t_c, per km of target path, for the whole
-                          team [m / km]: N * sum_i S_i / sum_i D_i, with S_i the
-                          SEARCH path of UAV i and D_i the target km over the same
-                          window; "-" if the mean window is < 20 % of the mission
+  (2a) Gathering time     time until each UAV first enters TRACK (joins the
+                          formation; the leader is in TRACK from its election) [s]:
+                          mean over the followers and team (the last UAV); "-" if a
+                          UAV has not joined before t_c (gathered_uavs in the CSV).
+                          A time, not a path: a path rewards a stuck UAV
+  (2b) Re-formation       % of the time spent in SEARCH after each UAV first joined
+       SEARCH             the formation and before t_c (UAV-steps); "-" if the mean
+                          window is < 20 % of the mission. CSV: the SEARCH episodes
+                          per UAV and their mean length [s]
   (3) Mission coverage    coverage efficiency (FOV union connected to the leader /
                           (N (2L)^2)) with every FOV dropped from t_c on, i.e.
                           coverage x completion
@@ -40,7 +41,9 @@ Warm-up: (3) and (4) skip the gathering at the start. "auto" = from the first
 step where every UAV is in TRACK; a number = that many seconds.
 
 The CSV also has the plain metrics (whole run, collisions ignored): total and
-SEARCH path length, coverage efficiency, visibility, mean exec time.
+SEARCH path length, coverage efficiency, visibility, mean exec time, and the
+path versions of (2): gathering SEARCH path summed over the UAVs [m] and the
+re-formation SEARCH path of the team per km of target path [m / km].
 
 Writes <out>.md (thesis table) and <out>.csv (one row per run).
 """
@@ -57,22 +60,23 @@ import numpy as np
 from evaluate import obstacle_clearance
 from metrics import run_metrics
 
-BENCHMARKS = ["scen1", "scen2", "scen3", "scen4"]
+BENCHMARKS = ["scen1", "scen2", "scen3", "scen4", "scen5", "scen6"]
 
 # (key, column title, format) in the thesis table
 COLUMNS = [
-    ("success", "Collision-free", "{:.2f}"),
     ("completion_pct", "Completion [%]", "{:.1f}"),
     ("exec_mean_ms", "(1) Exec. mean [ms]", "{:.1f}"),
     ("exec_p95_ms", "Exec. p95 [ms]", "{:.1f}"),
     ("exec_max_ms", "Exec. max [ms]", "{:.0f}"),
-    ("gather_search_m", "(2a) Gathering SEARCH [m]", "{:.0f}"),
-    ("reform_search_m_per_km", "(2b) Re-formation SEARCH [m/km]", "{:.0f}"),
+    ("gather_time_mean_s", "(2a) Gathering mean [s]", "{:.0f}"),
+    ("gather_time_team_s", "Gathering team [s]", "{:.0f}"),
+    ("reform_search_pct", "(2b) Re-formation SEARCH [%]", "{:.1f}"),
     ("mission_cov_eff", "(3) Mission coverage eff.", "{:.3f}"),
     ("mission_visibility", "(4) Mission visibility [%]", "{:.2f}"),
 ]
 # plain metrics (whole run, collisions ignored), in the CSV only
-EXTRA = ["gathered_uavs", "first_crash_s", "total_path_len", "search_path_len",
+EXTRA = ["success", "gathered_uavs", "gather_search_m", "reform_search_m_per_km",
+         "reform_episodes", "reform_episode_s", "first_crash_s", "total_path_len", "search_path_len",
          "fov_coverage_eff", "visibility", "exec_ms", "warmup_s", "sim_time"]
 REFORM_MIN_WINDOW = 0.2        # (2b) needs a mean window of at least this fraction of the run
 
@@ -125,8 +129,10 @@ def score(run_dir, warmup):
     else:
         m["mission_visibility"], m["mission_cov_eff"] = m["visibility"], m["fov_coverage_eff"]
     m.update(exec_stats(data, kc))
-    m.update(search_split(data, kc))
+    m.update(search_split(data, kc, dt))
     m.update(run=os.path.basename(os.path.normpath(run_dir)),
+             controller=prm.get("CONTROLLER", "ours"), seed=cfg.get("seed"),
+             start_jitter=cfg.get("start_jitter", 0.0),
              scenario=sd.get("name", data.get("meta", {}).get("scenario", "?")),
              uavs=len([k for k in data if isinstance(k, int)]), warmup_s=round(w * dt, 1))
     return m
@@ -181,12 +187,14 @@ def exec_stats(data, kc):
                 exec_max_ms=float(ct.max()))
 
 
-def search_split(data, kc):
-    """(2a) gathering and (2b) re-formation SEARCH path, each UAV split at its
-    own first entry into TRACK, both cut at the team's first collision kc."""
+def search_split(data, kc, dt):
+    """(2a) gathering and (2b) re-formation, each UAV split at its own first
+    entry into TRACK, both cut at the team's first collision kc."""
     ids = sorted(k for k in data if isinstance(k, int))
     st = [data[i].get("status") for i in ids]
-    nan = dict(gather_search_m=np.nan, reform_search_m_per_km=np.nan, gathered_uavs="-")
+    nan = dict(gather_search_m=np.nan, reform_search_m_per_km=np.nan, gathered_uavs="-",
+               gather_time_mean_s=np.nan, gather_time_team_s=np.nan, reform_search_pct=np.nan,
+               reform_episodes=np.nan, reform_episode_s=np.nan)
     if any(s is None or len(s) == 0 for s in st):
         return nan
     T = min(min(len(data[i]["path"]) for i in ids), min(len(s) for s in st))
@@ -194,6 +202,7 @@ def search_split(data, kc):
     tar = np.asarray(data[ids[0]]["tar_traj"])[:T, :2]
     tstep = np.linalg.norm(np.diff(tar, axis=0), axis=1)          # target, step k: k -> k+1
     gather, S, D, win, joined = 0.0, 0.0, 0.0, 0, 0
+    join_t, out_steps, episodes = [], 0, []
     for i, s in zip(ids, st):
         P = np.asarray(data[i]["path"])[:T, 1:3]
         step = np.linalg.norm(np.diff(P, axis=0), axis=1)
@@ -202,7 +211,12 @@ def search_split(data, kc):
             continue                                             # never joined before kc
         kt = int(np.argmax(track))
         joined += 1
+        join_t.append(kt * dt)
         gather += float(step[:kt].sum())
+        out = ~track[kt:kc]                                      # SEARCH after joining
+        out_steps += int(out.sum())
+        edge = np.diff(np.r_[0, out.astype(int), 0])
+        episodes += list((np.flatnonzero(edge == -1) - np.flatnonzero(edge == 1)) * dt)
         search = ~track[kt + 1:kc]                               # mode after the steps kt .. kc-2
         S += float(step[kt:kc - 1][search].sum())
         D += float(tstep[kt:kc - 1].sum()) / 1000.0
@@ -210,27 +224,37 @@ def search_split(data, kc):
     n = len(ids)
     out = dict(gathered_uavs=f"{joined}/{n}",
                gather_search_m=gather if joined == n else np.nan,
-               reform_search_m_per_km=np.nan)
-    if joined and D > 0 and win / joined >= REFORM_MIN_WINDOW * T:
-        out["reform_search_m_per_km"] = n * S / D
+               reform_search_m_per_km=np.nan, reform_search_pct=np.nan,
+               reform_episodes=np.nan, reform_episode_s=np.nan,
+               gather_time_team_s=max(join_t) if joined == n else np.nan,
+               gather_time_mean_s=np.nan)
+    if joined == n:
+        fol = [t for t in join_t if t > 0]                       # the leader joins at t = 0
+        out["gather_time_mean_s"] = float(np.mean(fol)) if fol else 0.0
+    if joined and win / joined >= REFORM_MIN_WINDOW * T:
+        if D > 0:
+            out["reform_search_m_per_km"] = n * S / D
+        out["reform_search_pct"] = 100.0 * out_steps / win
+        out["reform_episodes"] = len(episodes) / joined
+        out["reform_episode_s"] = float(np.mean(episodes)) if episodes else 0.0
     return out
 
 
 def cell(fmt, values):
-    """One value, or mean ± std over runs; nan (e.g. no collision) is left
-    out, "-" when every value is nan."""
+    """One value, or mean ± std over runs; nan ("-": crashed too early) is left
+    out and the number of runs kept is added as [k/N], "-" when every value is nan."""
     v = np.array(values, float)
+    N = len(v)
     v = v[np.isfinite(v)]
     if not len(v):
         return "-"
-    if len(v) == 1:
-        return fmt.format(v[0])
-    return f"{fmt.format(v.mean())} ± {fmt.format(v.std(ddof=1))}"
+    s = fmt.format(v[0]) if len(v) == 1 else f"{fmt.format(v.mean())} ± {fmt.format(v.std(ddof=1))}"
+    return s if len(v) == N else f"{s} [{len(v)}/{N}]"
 
 
 def table(rows, per_run=False):
-    """One line per scenario (mean ± std when a scenario has several runs),
-    or one line per run with per_run=True."""
+    """One line per (scenario, controller) with the success rate and mean ± std
+    over its runs (seeds), or one line per run with per_run=True."""
     if per_run:
         head = ["Scenario", "Run", "UAVs"] + [t for _, t, _ in COLUMNS]
         lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
@@ -239,11 +263,12 @@ def table(rows, per_run=False):
             cells += [cell(fmt, [r[k]]) for k, _, fmt in COLUMNS]
             lines.append("| " + " | ".join(cells) + " |")
         return "\n".join(lines)
-    head = ["Scenario", "UAVs", "Runs"] + [t for _, t, _ in COLUMNS]
+    head = ["Scenario", "Controller", "UAVs", "Runs", "Success"] + [t for _, t, _ in COLUMNS]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
-    for s in dict.fromkeys(r["scenario"] for r in rows):
-        rs = [r for r in rows if r["scenario"] == s]
-        cells = [s, str(rs[0]["uavs"]), str(len(rs))]
+    for s, c in dict.fromkeys((r["scenario"], r["controller"]) for r in rows):
+        rs = [r for r in rows if r["scenario"] == s and r["controller"] == c]
+        cells = [s, c, str(rs[0]["uavs"]), str(len(rs)),
+                 f"{sum(r['success'] for r in rs):.0f}/{len(rs)}"]
         for k, _, fmt in COLUMNS:
             cells.append(cell(fmt, [r[k] for r in rs]))
         lines.append("| " + " | ".join(cells) + " |")
@@ -266,7 +291,7 @@ def main():
 
     runs = a.runs or [r for s in BENCHMARKS for r in runs_for(s, a.all)]
     if not runs:
-        raise SystemExit("[METRICS] no runs found (expected runs/scen1_* .. runs/scen4_*)")
+        raise SystemExit("[METRICS] no runs found (expected runs/scen1_* .. runs/scen6_*)")
 
     rows = []
     for d in runs:
@@ -279,7 +304,7 @@ def main():
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out + ".md", "w", encoding="utf-8") as f:
         f.write(md)
-    keys = ["scenario", "run", "uavs"] + [k for k, _, _ in COLUMNS] + EXTRA
+    keys = ["scenario", "controller", "seed", "start_jitter", "run", "uavs"] + [k for k, _, _ in COLUMNS] + EXTRA
     with open(a.out + ".csv", "w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         wr.writeheader()

@@ -1,0 +1,23 @@
+2026-10-31 14:51:38,427 INFO    main: [config] Grid: 251,001 cells per UAV (9 MB for 7 UAVs).
+2026-10-31 14:51:38,427 INFO    main: [config] Local planning window: 22,801 cells.
+2026-10-31 14:51:38,427 INFO    main: [config] Narrowest gap between obstacles: 15.46 m (the grid planner needs about > 6.00 m to pass through a gap).
+2026-10-31 14:51:38,904 INFO    main: Run dir: runs/scen2_n7_s7_20261031-145138_pure_mpc | scenario scen2 | 7 UAV | seed 7
+2026-10-31 14:53:50,280 INFO    main: Checkpoint at step 500
+2026-10-31 14:56:21,714 INFO    main: Checkpoint at step 1000
+2026-10-31 14:59:10,580 INFO    main: Checkpoint at step 1500
+2026-10-31 15:01:57,661 INFO    main: Checkpoint at step 2000
+2026-10-31 15:04:49,093 INFO    main: Checkpoint at step 2500
+2026-10-31 15:08:01,924 INFO    main: Checkpoint at step 3000
+2026-10-31 15:10:51,174 INFO    main: Checkpoint at step 3500
+2026-10-31 15:13:40,087 INFO    main: Checkpoint at step 4000
+2026-10-31 15:16:06,376 INFO    main: Checkpoint at step 4500
+2026-10-31 15:18:42,513 INFO    main: Checkpoint at step 5000
+2026-10-31 15:21:08,646 INFO    main: Checkpoint at step 5500
+2026-10-31 15:23:36,269 INFO    main: Checkpoint at step 6000
+2026-10-31 15:26:04,195 INFO    main: Checkpoint at step 6500
+2026-10-31 15:28:44,934 INFO    main: Checkpoint at step 7000
+2026-10-31 15:31:39,587 INFO    main: Checkpoint at step 7500
+2026-10-31 15:34:20,869 INFO    main: Checkpoint at step 8000
+2026-10-31 15:36:02,583 INFO    main: Target reached its final destination after 8309 steps.
+2026-10-31 15:36:02,686 INFO    main: 8309 steps in 2663.8 s | compute per UAV per step: mean 45.8 ms, max 3134.0 ms
+2026-10-31 15:36:02,686 INFO    main: MPC infeasible count per UAV: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}

@@ -1,0 +1,29 @@
+2026-10-29 02:27:54,541 INFO    main: [config] Grid: 251,001 cells per UAV (10 MB for 8 UAVs).
+2026-10-29 02:27:54,541 INFO    main: [config] Local planning window: 22,801 cells.
+2026-10-29 02:27:54,541 INFO    main: [config] Narrowest gap between obstacles: 15.46 m (the grid planner needs about > 6.00 m to pass through a gap).
+2026-10-29 02:27:55,031 INFO    main: Run dir: runs/scen6_n8_s7_20261029-022754_cbf_qp | scenario scen6 | 8 UAV | seed 7
+2026-10-29 02:28:01,979 INFO    main: Checkpoint at step 500
+2026-10-29 02:28:15,424 INFO    main: Checkpoint at step 1000
+2026-10-29 02:28:26,696 INFO    main: Checkpoint at step 1500
+2026-10-29 02:28:37,807 INFO    main: Checkpoint at step 2000
+2026-10-29 02:28:53,094 INFO    main: Checkpoint at step 2500
+2026-10-29 02:29:06,220 INFO    main: Checkpoint at step 3000
+2026-10-29 02:29:21,503 INFO    main: Checkpoint at step 3500
+2026-10-29 02:29:32,997 INFO    main: Checkpoint at step 4000
+2026-10-29 02:29:56,222 INFO    main: Checkpoint at step 4500
+2026-10-29 02:30:15,219 INFO    main: Checkpoint at step 5000
+2026-10-29 02:30:27,118 INFO    main: Checkpoint at step 5500
+2026-10-29 02:30:41,473 INFO    main: Checkpoint at step 6000
+2026-10-29 02:30:52,899 INFO    main: Checkpoint at step 6500
+2026-10-29 02:31:20,248 INFO    main: Checkpoint at step 7000
+2026-10-29 02:31:31,907 INFO    main: Checkpoint at step 7500
+2026-10-29 02:31:45,656 INFO    main: Checkpoint at step 8000
+2026-10-29 02:32:10,571 INFO    main: Checkpoint at step 8500
+2026-10-29 02:32:28,083 INFO    main: Checkpoint at step 9000
+2026-10-29 02:32:35,709 INFO    main: Checkpoint at step 9500
+2026-10-29 02:32:49,769 INFO    main: Checkpoint at step 10000
+2026-10-29 02:32:58,056 INFO    main: Checkpoint at step 10500
+2026-10-29 02:33:14,512 INFO    main: Checkpoint at step 11000
+2026-10-29 02:33:19,424 INFO    main: Target reached its final destination after 11344 steps.
+2026-10-29 02:33:19,601 INFO    main: 11344 steps in 324.6 s | compute per UAV per step: mean 3.5 ms, max 124.4 ms
+2026-10-29 02:33:19,601 INFO    main: MPC infeasible count per UAV: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
