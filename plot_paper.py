@@ -6,7 +6,7 @@ config.json only, so a run made on another machine or branch can be drawn).
     python plot_paper.py overview runs/<dir> --t 120 300 450  # whole run + the snapshot windows
     python plot_paper.py snap runs/<dir> --t 120 300 450      # snapshots at those times
 
-Common options: --out <path without extension> (default results/paper/<scen>_<kind>),
+Common options: --out <path without extension> (default results/paper/<paper scen>_<kind>, see PAPER_NAME),
 --width <inches> (3.5 = one column, 7.16 = two columns), --labels (U0.., W0..).
 Each figure is written as .pdf and .png.
 
@@ -186,6 +186,11 @@ def sprint_mask(run):
     return v > SPRINT_RATIO * nominal
 
 
+# paper numbering of the scenarios (scen5 is not in the paper)
+PAPER_NAME = {"scen1": "scen1", "scen2": "scen3", "scen3": "scen6", "scen4": "scen2",
+              "scen6": "scen4", "scen7": "scen5", "scen5": "unused_scen5"}
+
+
 def save(fig, out):
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out + ".pdf", bbox_inches="tight", pad_inches=0.02)
@@ -228,16 +233,18 @@ def plot_scenario(run, a):
             ax.annotate(f"U{i}", (x, y), xytext=(3, -7), textcoords="offset points", fontsize=6)
     setup_axes(ax, sd["xlim"], sd["ylim"], grid=False)
     h = [ #Line2D([], [], color=OBS_COLOR, marker="s", ls="", ms=5, label="Obstacle"),
-         Line2D([], [], color=TARGET_COLOR, lw=1.0, label="Target path"),
-         Line2D([], [], marker="*", ls="", ms=7, mfc=TARGET_COLOR, mec="black", mew=0.5,
-                label="Target start"),
+        #  Line2D([], [], color=TARGET_COLOR, lw=1.0, label="Target path"),
+        #  Line2D([], [], marker="*", ls="", ms=7, mfc=TARGET_COLOR, mec="black", mew=0.5,
+                # label="Target start"),
         #  Line2D([], [], marker="X", ls="", ms=6, mfc=TARGET_COLOR, mec="black", mew=0.5,
         #         label="Target goal"),
-         Line2D([], [], marker="^", ls="", ms=4, mfc="blue", mec="black", mew=0.5,
-                label="UAV start")]
+        #  Line2D([], [], marker="^", ls="", ms=4, mfc="blue", mec="black", mew=0.5,
+        #         label="UAV start")
+                ]
     # if sprint.any():
     #     h.insert(2, Line2D([], [], color=SPRINT_COLOR, lw=2.2, label="Sprint leg"))
-    ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
+    if h:
+        ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
     return fig
 
 
@@ -269,7 +276,7 @@ def plot_overview(run, a):
             VR = run["VR"]
             ax.add_patch(patches.Rectangle(P[-1, i] - VR, 2 * VR, 2 * VR, fc=FOV_COLOR, ec=FOV_COLOR,
                                            alpha=0.25, lw=0.5, zorder=2))
-        draw_uav(ax, P[-1, i], UAV_COLORS[i % len(UAV_COLORS)], leader=(i == ld[-1]), size=3.2)
+        draw_uav(ax, P[-1, i], UAV_COLORS[i % len(UAV_COLORS)], leader=False, size=3.2)
     draw_target(ax, tar[-1], size=7)
     for j, t in enumerate(a.t or []):
         c = tar[step_at(run, t)]
@@ -277,25 +284,28 @@ def plot_overview(run, a):
                                        lw=0.9, ls="-", zorder=9))
         # small label just above the top-left corner, outside the window; a thin
         # white outline keeps it readable where it crosses a (black) obstacle
-        ax.annotate(f"({chr(97 + j)})", c + [-a.half, a.half], xytext=(0, 0.5),
-                    textcoords="offset points", ha="left", va="bottom", fontsize=a.box_label_size,
-                    color="#1f4e79", zorder=10,
-                    path_effects=[patheffects.withStroke(linewidth=1.5, foreground="white")])
+        if len(a.t) > 1:                                 # one window: no (a) label
+            ax.annotate(f"({chr(97 + j)})", c + [-a.half, a.half], xytext=(0, 0.5),
+                        textcoords="offset points", ha="left", va="bottom",
+                        fontsize=a.box_label_size, color="#1f4e79", zorder=10,
+                        path_effects=[patheffects.withStroke(linewidth=1.5, foreground="white")])
     setup_axes(ax, sd["xlim"], sd["ylim"], grid=False)
     h = [#Line2D([], [], color=OBS_COLOR, marker="s", ls="", ms=5, label="Obstacle"),
-         Line2D([], [], color="gray", lw=0.8, label="UAV paths"),
+        #  Line2D([], [], color="gray", lw=0.8, label="UAV paths"),
         #  Line2D([], [], color=TARGET_COLOR, lw=1.1, ls="--", label="Target path"),
-         Line2D([], [], marker="D", ls="", ms=3, mfc=LEADER_COLOR, mec="black", mew=0.4,
-                label="Leader hand-off"),
+        #  Line2D([], [], marker="D", ls="", ms=3, mfc=LEADER_COLOR, mec="black", mew=0.4,
+                # label="Leader hand-off"),
          #Line2D([], [], marker="^", ls="", ms=4, mfc="white", mec="black", mew=0.5, label="UAV start"),
-         Line2D([], [], marker="o", ls="", ms=6.5, mfc="none", mec=LEADER_COLOR, mew=1.4,
-                label="Leader")]
+        #  Line2D([], [], marker="o", ls="", ms=6.5, mfc="none", mec=LEADER_COLOR, mew=1.4,
+        #         label="Leader")
+                ]
     if not a.paths:
         h = h[1:]                                        # no "UAV paths" entry
-    if a.fov != "none":
-        h.append(Line2D([], [], marker="s", ls="", ms=6, mfc=to_rgba(FOV_COLOR, 0.3), mec="none",
-                        label="FOV" if a.fov == "swept" else "FOV (final)"))
-    ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
+    # if a.fov != "none":
+    #     h.append(Line2D([], [], marker="s", ls="", ms=6, mfc=to_rgba(FOV_COLOR, 0.3), mec="none",
+    #                     label="FOV" if a.fov == "swept" else "FOV (final)"))
+    if h:
+        ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
     return fig
 
 
@@ -334,7 +344,7 @@ def plot_snap(run, a):
         ax.set_yticks([])
         if a.scalebar > 0:
             draw_scalebar(ax, a.scalebar)
-        ax.set_title(f"({chr(97 + j)}) $t$ = {run['t'][k]:.0f} s", pad=3)
+        ax.set_title((f"({chr(97 + j)}) " if len(times) > 1 else "") + f"$t$ = {run['t'][k]:.0f} s", pad=3, fontsize=a.title_size)
         # if j % cols:
         #     ax.set_ylabel("")
         # if j < len(times) - cols:
@@ -344,12 +354,14 @@ def plot_snap(run, a):
     h = [#Line2D([], [], color=OBS_COLOR, marker="s", ls="", ms=5, label="Obstacle"),
         #  Line2D([], [], color="gray", lw=0.9, label=f"UAV trail (last {a.trail:.0f} s)"),
         #  Line2D([], [], color=TARGET_COLOR, lw=1.0, label="Target trail"),
-         Line2D([], [], marker="*", ls="", ms=7, mfc=TARGET_COLOR, mec="black", mew=0.5, label="Target"),
-         Line2D([], [], marker="s", ls="", ms=6, mfc=to_rgba(FOV_COLOR, 0.2), mec=FOV_COLOR, mew=0.5,
-                label="FOV"),
-         Line2D([], [], marker="o", ls="", ms=8, mfc="none", mec=LEADER_COLOR, mew=1.4, label="Leader")]
-    fig.legend(handles=h, loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, -0.02))
-    fig.tight_layout(rect=(0, 0.05, 1, 1), w_pad=0.6)
+        #  Line2D([], [], marker="*", ls="", ms=7, mfc=TARGET_COLOR, mec="black", mew=0.5, label="Target"),
+        #  Line2D([], [], marker="s", ls="", ms=6, mfc=to_rgba(FOV_COLOR, 0.2), mec=FOV_COLOR, mew=0.5,
+        #         label="FOV"),
+        #  Line2D([], [], marker="o", ls="", ms=8, mfc="none", mec=LEADER_COLOR, mew=1.4, label="Leader")
+        ]
+    if h:
+        fig.legend(handles=h, loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(rect=(0, 0.05 if h else 0, 1, 1), w_pad=0.6)
     return fig
 
 
@@ -365,6 +377,8 @@ def main():
     ap.add_argument("--t", "--boxes", dest="t", type=float, nargs="*",
                     help="snapshot times [s]: the panels of snap, the windows outlined in overview")
     ap.add_argument("--half", type=float, default=100.0, help="snapshot window half side [m]")
+    ap.add_argument("--title-size", type=float, default=8.0,
+                    help="snap: font size of the (a) t = .. s panel titles [pt]")
     ap.add_argument("--box-label-size", type=float, default=6.0,
                     help="overview: font size of the (a), (b), .. window labels [pt]")
     ap.add_argument("--trail", type=float, default=25.0, help="snap: trail length [s]")
@@ -383,7 +397,7 @@ def main():
         a.width = 7.16 if a.kind == "snap" else 3.5
     run = load(a.run)
     fig = {"scenario": plot_scenario, "overview": plot_overview, "snap": plot_snap}[a.kind](run, a)
-    save(fig, a.out or os.path.join("results", "paper", f"{run['name']}_{a.kind}"))
+    save(fig, a.out or os.path.join("results", "paper", f"{PAPER_NAME.get(run['name'], run['name'])}_{a.kind}"))
     if a.show:
         plt.show()
 
