@@ -6,7 +6,7 @@ thesis_metrics.py — The four thesis metrics (metrics.py) on the benchmark runs
     python thesis_metrics.py runs/<dir> ...     # given runs
     python thesis_metrics.py --all --per-run    # every run on its own line
     python thesis_metrics.py runs/<dir> --out results/<name>   # one run, its own output file
-    python thesis_metrics.py --warmup 0         # count from step 0 (default: auto, see below)
+    python thesis_metrics.py --warmup auto      # skip the gathering for (3), (4) (default: 0, see below)
 
 Collisions (same tests as evaluate.py: obstacle clearance < R, two UAVs
 closer than 2R, outside the map): in the simulator a UAV flies on through an
@@ -28,17 +28,20 @@ driving score penalise a failure instead of discarding the episode):
                           window is < 20 % of the mission. CSV: the SEARCH episodes
                           per UAV and their mean length [s]
   (3) Mission coverage    coverage efficiency (FOV union connected to the leader /
-                          (N (2L)^2)) with every FOV dropped from t_c on, i.e.
-                          coverage x completion
-  (4) Mission visibility  % of steps with the target inside >= 1 FOV, the steps
-                          from t_c on counting as not seen, i.e. visibility x completion
+                          (N (2L)^2)) over the whole mission [0, T), every FOV
+                          dropped from t_c on, i.e. (coverage before t_c) x completion
+  (4) Mission visibility  % of the steps of [0, T) with the target inside >= 1 FOV,
+                          the steps from t_c on counting as not seen, i.e.
+                          (visibility before t_c) x completion
 SEARCH (out of the formation): a satellite farther from the leader than the
 formation threshold (enters TRACK within VIEWING_RADIUS + FORMATION_GAP, leaves
 it beyond that + TRACK_EXIT_HYSTERESIS), or every UAV while no UAV sees the
 target. Needs the status recorded by main.py.
 
-Warm-up: (3) and (4) skip the gathering at the start. "auto" = from the first
-step where every UAV is in TRACK; a number = that many seconds.
+Warm-up (default 0): (3) and (4) are averaged over the whole mission, the same
+window [0, T) for every method; the gathering speed is (2a). A number = that
+many seconds skipped at the start; "auto" = from the first step where every UAV
+is in TRACK at once (a different window per run, 0 if that never happens).
 
 The CSV also has the plain metrics (whole run, collisions ignored): total and
 SEARCH path length, coverage efficiency, visibility, mean exec time, and the
@@ -283,8 +286,9 @@ def main():
                     help="use every run of each benchmark, not only the latest")
     ap.add_argument("--per-run", action="store_true",
                     help="one table line per run instead of mean ± std per scenario")
-    ap.add_argument("--warmup", default="auto",
-                    help="'auto' (all UAVs in TRACK) or seconds skipped for coverage/tracking")
+    ap.add_argument("--warmup", default="0",
+                    help="seconds skipped for (3), (4) (default 0 = whole mission) "
+                         "or 'auto' (from the first step with all UAVs in TRACK)")
     ap.add_argument("--out", default=os.path.join("results", "thesis_metrics"),
                     help="output path without extension (writes .md and .csv)")
     a = ap.parse_args()
@@ -298,9 +302,11 @@ def main():
         print(f"[METRICS] {d} ...")
         rows.append(score(d, a.warmup))
 
-    md = ("# Thesis metrics\n\n" + table(rows, a.per_run) + "\n\n"
-          "Warm-up skipped for coverage / tracking: "
-          + ", ".join(f"{r['run']} {r['warmup_s']} s" for r in rows) + ".\n")
+    note = ("(3), (4) over the whole mission (no warm-up skipped)."
+            if all(r["warmup_s"] == 0 for r in rows) else
+            "Warm-up skipped for (3), (4): "
+            + ", ".join(f"{r['run']} {r['warmup_s']} s" for r in rows) + ".")
+    md = "# Thesis metrics\n\n" + table(rows, a.per_run) + "\n\n" + note + "\n"
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out + ".md", "w", encoding="utf-8") as f:
         f.write(md)
