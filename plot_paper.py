@@ -117,11 +117,11 @@ def setup_axes(ax, xlim, ylim, grid=True):
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
     ax.set_aspect("equal")
-    ax.set_xlabel("x [m]")
-    ax.set_ylabel("y [m]")
+    # no "x [m]" / "y [m]" labels and no ticks: the frame only
+    ax.set_xticks([])
+    ax.set_yticks([])
     if grid:
         ax.grid(True, lw=0.3, alpha=0.4)
-    ax.tick_params(width=0.5, length=2)
 
 
 def fig_for(sd, width, extra_h=0.0):
