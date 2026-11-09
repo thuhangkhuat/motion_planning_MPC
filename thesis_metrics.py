@@ -30,9 +30,9 @@ driving score penalise a failure instead of discarding the episode):
   (3) Mission coverage    coverage efficiency (FOV union connected to the leader /
                           (N (2L)^2)) over the whole mission [0, T), every FOV
                           dropped from t_c on, i.e. (coverage before t_c) x completion
-  (4) Mission visibility  % of the steps of [0, T) with the target inside >= 1 FOV,
-                          the steps from t_c on counting as not seen, i.e.
-                          (visibility before t_c) x completion
+  (4) Target loss         % of the steps of [0, T) with the target inside no FOV,
+                          the steps from t_c on counting as lost, i.e.
+                          100 - mission visibility (mission_visibility in the CSV)
 SEARCH (out of the formation): a satellite farther from the leader than the
 formation threshold (enters TRACK within VIEWING_RADIUS + FORMATION_GAP, leaves
 it beyond that + TRACK_EXIT_HYSTERESIS), or every UAV while no UAV sees the
@@ -75,12 +75,12 @@ COLUMNS = [
     ("gather_time_team_s", "Gathering team [s]", "{:.0f}"),
     ("reform_search_pct", "(2b) Re-formation SEARCH [%]", "{:.1f}"),
     ("mission_cov_eff", "(3) Mission coverage eff.", "{:.3f}"),
-    ("mission_visibility", "(4) Mission visibility [%]", "{:.2f}"),
+    ("target_loss_pct", "(4) Target loss [%]", "{:.2f}"),
 ]
 # plain metrics (whole run, collisions ignored), in the CSV only
 EXTRA = ["success", "gathered_uavs", "gather_search_m", "reform_search_m_per_km",
          "reform_episodes", "reform_episode_s", "first_crash_s", "total_path_len", "search_path_len",
-         "fov_coverage_eff", "visibility", "exec_ms", "warmup_s", "sim_time"]
+         "mission_visibility", "fov_coverage_eff", "visibility", "exec_ms", "warmup_s", "sim_time"]
 REFORM_MIN_WINDOW = 0.2        # (2b) needs a mean window of at least this fraction of the run
 
 
@@ -100,6 +100,15 @@ def warmup_steps(data, dt, warmup):
     T = min(len(s) for s in st)
     track = np.stack([np.asarray(s)[:T, 0] > 0 for s in st], 1).all(1)
     return int(np.argmax(track)) if track.any() else 0
+
+
+def controller_name(prm):
+    """CONTROLLER, with the variant of a sensitivity run appended (apfc_brake)."""
+    c = prm.get("CONTROLLER", "ours")
+    guard = prm.get("APFC_OBS_GUARD", "step")
+    if c == "apfc" and guard not in (None, "step"):
+        c = f"apfc_{guard}"
+    return c
 
 
 def score(run_dir, warmup):
@@ -131,10 +140,11 @@ def score(run_dir, warmup):
         m["mission_visibility"], m["mission_cov_eff"] = mm["safe_visibility"], mm["safe_fov_coverage_eff"]
     else:
         m["mission_visibility"], m["mission_cov_eff"] = m["visibility"], m["fov_coverage_eff"]
+    m["target_loss_pct"] = 100.0 - m["mission_visibility"]
     m.update(exec_stats(data, kc))
     m.update(search_split(data, kc, dt))
     m.update(run=os.path.basename(os.path.normpath(run_dir)),
-             controller=prm.get("CONTROLLER", "ours"), seed=cfg.get("seed"),
+             controller=controller_name(prm), seed=cfg.get("seed"),
              start_jitter=cfg.get("start_jitter", 0.0),
              scenario=sd.get("name", data.get("meta", {}).get("scenario", "?")),
              uavs=len([k for k in data if isinstance(k, int)]), warmup_s=round(w * dt, 1))

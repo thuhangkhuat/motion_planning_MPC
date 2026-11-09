@@ -174,7 +174,13 @@ class APFC:
         r = cfg["APFC_RADIUS"]
         self.r_des, self.r_guard = r, 7.0 / 8.0 * r
         self.nb_thr, self.nb_inf = cfg["COLLISION_AVOID_DISTANCE"], cfg["UAV_SAFE_DISTANCE"]
-        dmin = cfg["ROBOT_RADIUS"] + cfg["VMAX"] * cfg["TIMESTEP"]
+        guard = cfg.get("APFC_OBS_GUARD", "step")
+        if guard == "step":                              # paper eq. 15, e_max = R
+            dmin = cfg["ROBOT_RADIUS"] + cfg["VMAX"] * cfg["TIMESTEP"]
+        elif guard == "brake":                           # stop from VMAX before the guarantee
+            dmin = cfg["ROBOT_RADIUS"] + cfg["VMAX"] ** 2 / (2.0 * cfg["UMAX"])
+        else:
+            dmin = float(guard)
         self.ob_inf, self.ob_thr = dmin, 2.0 * dmin
         self.approach_range = 2.0 * 3.0
         self.approach_angle, self.active_guard = 0.5, 0.01

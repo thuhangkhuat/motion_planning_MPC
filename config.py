@@ -221,6 +221,11 @@ APFC_W_POS = 100.0             # kappa: terminal position weight (reference acti
 APFC_W_VEL = 100.0             # terminal velocity weight
 APFC_W_INPUT = 10.0            # input weight (reference energyWeight)
 APFC_U_RATIO = 3.0 / 8.0       # MPC input bound / F_max (= UMAX); reference 3 / 8, must be < 1
+# Obstacle guarantee distance d_min (the influence range is 2 d_min). "step"
+# (default) = R + VMAX dt (paper eq. 15); "brake" = R + VMAX^2 / (2 UMAX), the
+# braking distance (sensitivity check); or a number in m. Also from the shell:
+# APFC_OBS_GUARD=brake CONTROLLER=apfc python main.py ...
+APFC_OBS_GUARD = os.environ.get("APFC_OBS_GUARD", "step")
 # Baseline "cbf_qp" (cbfqp.py: Wang, Ames, Egerstedt, T-RO 2017): safety filter on a PD
 CBF_QP_GAMMA = 1.0             # kappa(h) = gamma h^3 (not given in the paper)
 CBF_QP_KP = 1.0                # nominal PD: u = -KP (p - r) - KD (v - r_dot)
