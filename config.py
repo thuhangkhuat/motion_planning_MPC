@@ -206,7 +206,8 @@ CONTINGENCY = True
 # apfc.py: Tallamraju et al., RA-L 2019; circle formation, no slot / planner) |
 # "cbf_qp" (baseline, cbfqp.py: Wang et al., T-RO 2017; same leader / slot layers,
 # PD + safety filter, no planner; "cbf_qp_lag": the same with delay-robust barriers) | "apf" / "pure_mpc" (the project's first version,
-# apf.py / pure_mpc.py; same leader / slot layers, no planner / corridor / CBF).
+# apf.py / pure_mpc.py; same leader / slot layers, no planner / corridor / CBF) |
+# "mader" (baseline, mader.py: Tordesillas, How, T-RO 2022; same leader / slot / planner layers).
 # Also from the shell: CONTROLLER=impc_ob python main.py ...
 CONTROLLER = os.environ.get("CONTROLLER", "ours")
 IMPC_EPSILON = 1.0             # warning-band width (reference 0.2 m for r_a = 0.3 m, x L = 5)
@@ -232,6 +233,18 @@ CBF_QP_KP = 1.0                # nominal PD: u = -KP (p - r) - KD (v - r_dot)
 CBF_QP_KD = 2.0
 # Baselines "apf" / "pure_mpc" (apf.py, pure_mpc.py): the first version of this project
 PURE_MPC_W_COL = 1.5           # W_col of the original robot_mpc.py config
+# Baseline "mader" (mader.py: Tordesillas, How, T-RO 2022; same leader / slot / planner
+# layers): clamped cubic B-spline of MADER_N_SEG intervals of MADER_SEG_DT s, ending at rest
+MADER_N_SEG = 10               # intervals (horizon T = 4 s: a stop from VMAX takes 2 s)
+MADER_SEG_DT = 0.4             # interval length (s)
+MADER_RA = 20.0                # local goal: this far along the JPS path (MADER's R_a)
+MADER_BOX = 25.0               # control points within +-MADER_BOX of the UAV (the corridor box)
+MADER_MAX_CHUNKS = 48          # obstacle polygons in the optimisation (nearest to the guess)
+MADER_CHUNK_RANGE = 10.0       # ... only those within this distance of the initial guess (m)
+MADER_CHUNK_VERTS = 6          # vertices per obstacle polygon
+MADER_CHUNK_LEN = 3.0          # LiDAR points per polygon span at most this (m)
+MADER_W_FINAL = 1e3            # weight of |q_m - G|^2 (the jerk cost is ~1e2 .. 1e3)
+MADER_MAX_ITER = 100           # IPOPT iterations (MADER: a time budget); a normal solve takes 15-50
 BACKUP_HORIZON = 25
 W_backup = 0.1                 # effort weight of the backup branch, relative to W_u
 
@@ -590,9 +603,9 @@ def validate_config():
     if LOCAL_SEARCH not in ("jps", "dijkstra"):
         add("ERROR", f"Unknown LOCAL_SEARCH={LOCAL_SEARCH!r} (use 'jps' or 'dijkstra').")
     if CONTROLLER not in ("ours", "impc_ob", "impc_ob_rec", "apfc", "cbf_qp", "cbf_qp_lag", "apf",
-                          "pure_mpc"):
+                          "pure_mpc", "mader"):
         add("ERROR", f"Unknown CONTROLLER={CONTROLLER!r} (use 'ours', 'impc_ob', 'impc_ob_rec', 'apfc', 'cbf_qp', "
-                     f"'cbf_qp_lag', 'apf' or 'pure_mpc').")
+                     f"'cbf_qp_lag', 'apf', 'pure_mpc' or 'mader').")
     if UNKNOWN_POLICY not in ("blocked", "optimistic"):
         add("ERROR", f"Unknown UNKNOWN_POLICY={UNKNOWN_POLICY!r}.")
 

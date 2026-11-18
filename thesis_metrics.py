@@ -27,8 +27,9 @@ driving score penalise a failure instead of discarding the episode):
        SEARCH             the formation and before t_c (UAV-steps); "-" if the mean
                           window is < 20 % of the mission. CSV: the SEARCH episodes
                           per UAV and their mean length [s]
-  (3) Mission coverage    coverage efficiency (FOV union connected to the leader /
-                          (N (2L)^2)) over the whole mission [0, T), every FOV
+  (3) Mission coverage    coverage efficiency (union of the FOVs connected to a FOV
+                          that sees the target, / (N (2L)^2); 0 while no FOV sees
+                          it) over the whole mission [0, T), every FOV
                           dropped from t_c on, i.e. (coverage before t_c) x completion
   (4) Target loss         % of the steps of [0, T) with the target inside no FOV,
                           the steps from t_c on counting as lost, i.e.
@@ -81,6 +82,9 @@ COLUMNS = [
 EXTRA = ["success", "gathered_uavs", "gather_search_m", "reform_search_m_per_km",
          "reform_episodes", "reform_episode_s", "first_crash_s", "total_path_len", "search_path_len",
          "mission_visibility", "fov_coverage_eff", "visibility", "exec_ms", "warmup_s", "sim_time"]
+# (3): the FOVs connected (through overlapping FOVs) to the one that sees the
+# target; 0 while no FOV sees it, so coverage only counts while the team tracks
+COV_MODE = "target_component"
 REFORM_MIN_WINDOW = 0.2        # (2b) needs a mean window of at least this fraction of the run
 
 
@@ -126,7 +130,8 @@ def score(run_dir, warmup):
     T = alive.shape[0]
     first = np.flatnonzero(~alive.all(axis=1))
     kc = int(first[0]) if len(first) else T                  # first collision of the team
-    m = run_metrics(data, fov_side=fov_side, robot_radius=R, timestep=dt, warmup_steps=w)
+    m = run_metrics(data, fov_side=fov_side, robot_radius=R, timestep=dt, warmup_steps=w,
+                    cov_mode=COV_MODE)
     m["exec_ms"] = 1e3 * m["exec_time"]
     m["search_path_len"] = search_path_length(data)
     m["success"] = float(kc == T)
@@ -136,7 +141,7 @@ def score(run_dir, warmup):
     if kc < T:
         team = np.repeat((np.arange(T) < kc)[:, None], alive.shape[1], axis=1)
         mm = run_metrics(data, fov_side=fov_side, robot_radius=R, timestep=dt,
-                         warmup_steps=w, alive=team)
+                         warmup_steps=w, alive=team, cov_mode=COV_MODE)
         m["mission_visibility"], m["mission_cov_eff"] = mm["safe_visibility"], mm["safe_fov_coverage_eff"]
     else:
         m["mission_visibility"], m["mission_cov_eff"] = m["visibility"], m["fov_coverage_eff"]

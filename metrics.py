@@ -193,7 +193,7 @@ def run_metrics(data, fov_side, robot_radius, timestep,
     # ── (3) FOV coverage theo thời gian ──
     cov_series = np.zeros(T)
     for t in range(T):
-        area, _ = fov_coverage(pos[t], fov_side,
+        area, _ = fov_coverage(pos[t], fov_side, target=tar[t],
                                leader_idx=int(leader_seq[t]),
                                connect_slack=connect_slack, mode=cov_mode)
         cov_series[t] = area
@@ -211,7 +211,7 @@ def run_metrics(data, fov_side, robot_radius, timestep,
                 safe_cov[t] = 0.0
                 continue
             lead = int(np.argmin(np.linalg.norm(pos[t, idx] - tar[t], axis=1)))
-            safe_cov[t], _ = fov_coverage(pos[t, idx], fov_side, leader_idx=lead,
+            safe_cov[t], _ = fov_coverage(pos[t, idx], fov_side, target=tar[t], leader_idx=lead,
                                           connect_slack=connect_slack, mode=cov_mode)
         safe["safe_fov_coverage_eff"] = float((safe_cov[s:] / ideal).mean())
 

@@ -47,7 +47,9 @@ def _MPC_CFG():
             "APFC_RADIUS", "APFC_OBS_GUARD", "APFC_W_POS", "APFC_W_VEL", "APFC_W_INPUT", "APFC_U_RATIO",
             "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
-            "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE"]
+            "MPC_SOLVER", "SQP_OPTIONS", "SQP_FALLBACK_IPOPT", "COST_LENGTH_SCALE", "COST_ACCEL_SCALE",
+            "MADER_N_SEG", "MADER_SEG_DT", "MADER_RA", "MADER_BOX", "MADER_MAX_CHUNKS", "MADER_CHUNK_RANGE",
+            "MADER_CHUNK_VERTS", "MADER_CHUNK_LEN", "MADER_W_FINAL", "MADER_MAX_ITER"]
     return {k: getattr(_c, k) for k in keys}
 
 
@@ -293,6 +295,8 @@ class Robot:
             if CONTROLLER in ("impc_ob", "impc_ob_rec") and getattr(self, "impc", None) is not None:
                 stop = self.impc._fallback(           # baseline: rest of its last plan
                     np.asarray(obstacle_points, float).reshape(-1, 2))
+            elif CONTROLLER == "mader" and getattr(self, "mader", None) is not None:
+                stop = self.mader.control(self.time_stamp)   # baseline: its committed trajectory
             elif CONTINGENCY and getattr(self, "_backup", None) is not None:
                 stop = self._backup_control()          # backup branch stops in its corridor
             elif TERMINAL_STOP and getattr(self, "_plan_left", None) is not None:
@@ -304,6 +308,9 @@ class Robot:
 
         if CONTROLLER in ("impc_ob", "impc_ob_rec"):  # baseline (impc_ob.py), same upper layers
             self._control_impc(robots, obstacle_points, planning_goal)
+            return
+        if CONTROLLER == "mader":                      # baseline (mader.py), same upper layers
+            self._control_mader(robots, obstacle_points, planning_goal)
             return
 
         target_pos = self.goal[:3].reshape(1, 3)
@@ -536,6 +543,20 @@ class Robot:
         self.list_A, self.list_b = [], []           # the baseline builds its own corridors
         u = self.impc.plan(np.asarray(planning_goal, float)[:2], self.traj_ref,
                            np.asarray(obstacle_points, float).reshape(-1, 2), others, team)
+        self.updateState(u, TIMESTEP)
+
+    # ============================================================
+    # Baseline controller: MADER (mader.py)
+    # ============================================================
+    def _control_mader(self, robots, obstacle_points, planning_goal):
+        from mader import MADER
+        others = [r for r in robots if r.index != self.index]
+        if getattr(self, "mader", None) is None:
+            self.mader = MADER(self, len(others), _MPC_CFG())
+        self.list_A, self.list_b = [], []           # the baseline builds its own obstacle polygons
+        u = self.mader.plan(np.asarray(planning_goal, float)[:2], self.traj_ref,
+                            np.asarray(obstacle_points, float).reshape(-1, 2), others,
+                            self.time_stamp)
         self.updateState(u, TIMESTEP)
 
     # ============================================================
@@ -1280,8 +1301,8 @@ class Robot:
             # than one horizon, so a later contraction makes the satellite trail it
             lp = np.asarray(lp)
             pts = list(lp[::max(1, HORIZON_LENGTH // 4), :2])
-            if CONTROLLER in ("impc_ob", "impc_ob_rec"):
-                # IMPC-OB plans end at rest (v_K = 0): extrapolating the final
+            if CONTROLLER in ("impc_ob", "impc_ob_rec", "mader"):
+                # IMPC-OB (and MADER) plans end at rest (v_K = 0): extrapolating the final
                 # velocity added nothing and the look-ahead stopped ~6 m ahead (vs
                 # ~26 m = 5 s of flight for "ours", scen1), so the formation saw the
                 # obstacles later and contracted less; look SLOT_LOOKAHEAD_TIME
