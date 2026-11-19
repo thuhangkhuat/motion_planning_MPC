@@ -199,6 +199,15 @@ TERMINAL_STOP = False          # superseded by CONTINGENCY (kept for comparison 
 # fallback flies it. BACKUP_HORIZON * dt must allow a stop from VMAX:
 # UMAX * (BACKUP_HORIZON*dt - ACCEL_TAU - dt) >= VMAX.
 CONTINGENCY = True
+# Separating planes on the backup branch (needs CONTINGENCY): every UAV commits
+# its backup (time-stamped) and a new backup must stay, at every step i, on its
+# side of a plane at UAV_SAFE_DISTANCE from each other UAV's committed backup at
+# the same time. The planes are built from the UAV's own committed backup, which
+# is therefore always feasible; the UAVs only ever fly committed backups (the
+# first control is shared with the plan), so they never come closer than
+# UAV_SAFE_DISTANCE (or than they already were). Also from the shell:
+# BACKUP_SEPARATION=0 python main.py ...  (the runs before 2026-11-19: off)
+BACKUP_SEPARATION = os.environ.get("BACKUP_SEPARATION", "1") != "0"
 # Trajectory layer: "ours" (mpc_problem.py) | "impc_ob" (baseline, impc_ob.py:
 # Chen et al., RA-L 2023; same leader / slot / planner layers; "impc_ob_rec": the
 # same with a recovery rule when newly seen obstacles cut the predetermined

@@ -43,7 +43,7 @@ def _MPC_CFG():
             "W_tra", "STANDOFF_DISTANCE", "CORRIDOR_BARRIER_EPS", "W_corridor",
             "COLLISION_AVOID_DISTANCE", "W_collision_avoid", "UAV_SAFE_DISTANCE", "W_uav_slack",
             "WORLD_BOUNDS", "W_bounds_slack", "CORRIDOR_RECOVER_ACCEL_RATIO", "CORRIDOR_RECOVER_HOLD",
-            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "IMPC_EPSILON", "IMPC_BUFFER",
+            "TERMINAL_STOP", "CONTINGENCY", "BACKUP_SEPARATION", "BACKUP_HORIZON", "W_backup", "CORRIDOR_MARGIN", "IMPC_EPSILON", "IMPC_BUFFER",
             "APFC_RADIUS", "APFC_OBS_GUARD", "APFC_W_POS", "APFC_W_VEL", "APFC_W_INPUT", "APFC_U_RATIO",
             "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL", "W_leader_slack", "D_FRAC", "ACCEL_TAU",
             "CBF_BOX_RATIO", "VIEWING_RADIUS", "DT_CBF_GAMMA", "IPOPT_OPTIONS",
@@ -616,6 +616,42 @@ class Robot:
         Xb = self._backup[0]
         return Xb[min(self._bk_i + 1, len(Xb) - 1):, :2]
 
+    def committed_positions(self, k_from, n):
+        """Positions (n, 2) of this UAV's committed backup at the absolute steps
+        k_from .. k_from + n - 1 (held at rest after its end); without one, the
+        current position (start-up: the UAV is at rest). BACKUP_SEPARATION."""
+        c = getattr(self, "_bk_commit", None)
+        if c is None:
+            return np.repeat(self.state[None, :2], n, axis=0)
+        k0, P = c
+        idx = np.clip(np.arange(k_from, k_from + n) - k0, 0, len(P) - 1)
+        return P[idx]
+
+    def _backup_planes(self, others, k):
+        """One (n, b, flag) per other UAV for the backup branch of this step's
+        solve (x0 at step k, Xb[i] at step k + i): the plane at step i separates
+        this UAV's committed backup p_i from the other's q_i, normal
+        n = (p_i - q_i) / |p_i - q_i|, and keeps the new backup at least
+        min(UAV_SAFE_DISTANCE, |p_i - q_i|) from q_i along n. The committed
+        backup itself meets every plane, so the problem stays feasible."""
+        Hb = BACKUP_HORIZON
+        mine = self.committed_positions(k + 1, Hb)
+        reach = 2 * VMAX * Hb * TIMESTEP + UAV_SAFE_DISTANCE
+        out = []
+        for o in others:
+            if np.linalg.norm(o.state[:2] - self.state[:2]) > reach or not hasattr(o, "committed_positions"):
+                out.append((np.zeros((Hb, 2)), np.zeros(Hb), 0.0))
+                continue
+            q = o.committed_positions(k + 1, Hb)
+            d = mine - q
+            dist = np.linalg.norm(d, axis=1)
+            fb = self.state[:2] - o.state[:2]
+            fb = fb / np.linalg.norm(fb) if np.linalg.norm(fb) > 1e-9 else np.array([1.0, 0.0])
+            n = np.where(dist[:, None] > 1e-9, d / np.maximum(dist, 1e-9)[:, None], fb)
+            thr = np.minimum(UAV_SAFE_DISTANCE, np.sum(n * d, axis=1)) - 1e-3
+            out.append((n, np.sum(n * q, axis=1) + thr, 1.0))
+        return out
+
     @staticmethod
     def _contains(A, b, P, margin):
         A = np.asarray(A, float).reshape(-1, 2)
@@ -761,6 +797,9 @@ class Robot:
         if self._mpc_X is None:
             self._mpc_X = np.tile(x0, (HORIZON_LENGTH + 1, 1))
             self._mpc_U = np.zeros((HORIZON_LENGTH, 2))
+        k_now = int(round(self.time_stamp / TIMESTEP))
+        bk_planes = (self._backup_planes(others, k_now)
+                     if CONTINGENCY and BACKUP_SEPARATION else None)
         ok, Xs, Us = self.mpc.solve(
             x0=x0,
             A_hard=active_A, b_hard=active_b,
@@ -770,7 +809,7 @@ class Robot:
             tgt=self._target_trajectory(target_pos[0, :2]), w_search=w_search, slot=slot, w_slot=w_slot,
             leader=is_leader, ref=ref, trk_goal=trk_goal, s_ref=1.0 if guide else 0.0,
             w_tra=w_tra,
-            X_init=self._mpc_X, U_init=self._mpc_U)
+            X_init=self._mpc_X, U_init=self._mpc_U, bk_planes=bk_planes)
         if ok:
             self._mpc_X, self._mpc_U = Xs, Us
             # back to the 3D layout the rest of the code uses (altitude held)
@@ -783,6 +822,8 @@ class Robot:
             self._plan_left = H - 1        # controls U[1..H-1] left for the fallback
             self._backup = self.mpc.last_backup if CONTINGENCY else None
             self._bk_i = 0
+            if self._backup is not None:       # committed: what the other UAVs separate from
+                self._bk_commit = (k_now, np.asarray(self._backup[0], float)[:, :2].copy())
         else:
             log.warning("[Robot %d] MPC solve failed at t=%.2f", self.index, self.time_stamp)
             control = self._fallback_control()

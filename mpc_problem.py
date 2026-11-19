@@ -151,6 +151,20 @@ class MPCProblem:
                 opti.subject_to(ca.mtimes(p["A_hard"], Xb[i, :2].T) <= p["b_hard"] - Rc + allow)
             opti.subject_to(Xb[Hb, 2:6] == 0)
 
+        # ── separating planes on the backup branch: BACKUP_SEPARATION ──
+        # n_ji . Xb[i] >= b_ji for every other UAV j and step i = 1..Hb (the
+        # planes are built in robot_jps.py from the committed backups); a UAV out
+        # of reach has flag 0 and its planes are relaxed by BIG. Hard: when they
+        # cannot be met the solve fails and the UAV flies its committed backup.
+        self.sep = bool(Hb and cfg.get("BACKUP_SEPARATION", False) and n_others)
+        if self.sep:
+            p["bk_n"] = [opti.parameter(Hb, 2) for _ in range(n_others)]
+            p["bk_b"] = [opti.parameter(Hb, 1) for _ in range(n_others)]
+            p["bk_flag"] = opti.parameter(n_others, 1)
+            for j in range(n_others):
+                lhs = ca.sum2(Xb[1:, :2] * p["bk_n"][j])
+                opti.subject_to(lhs >= p["bk_b"][j] - BIG * (1 - p["bk_flag"][j]))
+
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
         # Soft-hard: a slack with a large penalty keeps the problem feasible when
         # another UAV is already too close (an infeasible MPC falls back to
@@ -280,7 +294,9 @@ class MPCProblem:
 
     def _solve(self, x0, A_hard, b_hard, A_cost, b_cost, use_corr_cost, others, nb_flags,
                tgt, w_search, slot, w_slot, leader, ref, trk_goal, s_ref,
-               X_init, U_init, w_tra=None):
+               X_init, U_init, w_tra=None, bk_planes=None):
+        """bk_planes: None, or one (n (Hb, 2), b (Hb,), flag) per other UAV
+        (BACKUP_SEPARATION), in the order of `others`."""
         o, p, cfg = self.opti, self.p, self.cfg
         o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))   # [px, py, vx, vy, ax, ay]
         Ah, bh = self._pad(A_hard, b_hard)
@@ -297,6 +313,15 @@ class MPCProblem:
         flags = np.zeros((max(self.n_others, 1), 1))
         flags[:len(nb_flags), 0] = nb_flags
         o.set_value(p["nb_flag"], flags)
+        if self.sep:
+            fl = np.zeros((self.n_others, 1))
+            for j in range(self.n_others):
+                n, b, f = (bk_planes[j] if bk_planes is not None
+                           else (np.zeros((self.Hb, 2)), np.zeros(self.Hb), 0.0))
+                o.set_value(p["bk_n"][j], np.asarray(n, float).reshape(self.Hb, 2))
+                o.set_value(p["bk_b"][j], np.asarray(b, float).reshape(self.Hb, 1))
+                fl[j, 0] = f
+            o.set_value(p["bk_flag"], fl)
         tgt = np.asarray(tgt, float)                  # (2,) fixed point or (H+1, 2) trajectory
         o.set_value(p["tgt"], np.broadcast_to(tgt[..., :2], (cfg["HORIZON_LENGTH"] + 1, 2)))
         o.set_value(p["w_search"], w_search)
