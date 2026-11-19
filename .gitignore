@@ -14,3 +14,8 @@ cache_target/
 data*_scen*_*.txt
 scenario_*_preview.png
 *.gif
+
+# local smoke runs / batch logs
+runs_smoke/
+mader_logs/
+*.out
